@@ -80,3 +80,22 @@ async def test_http_errors_use_a_consistent_public_envelope() -> None:
     assert unexpected_response.status_code == 500
     assert unexpected_response.json()["error"]["code"] == "internal_error"
     assert "password" not in unexpected_response.text
+
+
+async def test_openapi_describes_the_versioned_api_boundary() -> None:
+    """OpenAPI exposes stable service metadata and the `/v1` router route."""
+    transport = ASGITransport(app=get_app(build_test_settings()))
+
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        openapi_response = await client.get("/openapi.json")
+        metadata_response = await client.get("/v1/")
+
+    openapi = openapi_response.json()
+    assert openapi_response.status_code == 200
+    assert openapi["info"]["title"] == "Real-Time Vocabulary Quiz API"
+    assert openapi["info"]["version"] == "0.1.0"
+    assert "/v1/" in openapi["paths"]
+    assert metadata_response.json() == {
+        "api_version": "v1",
+        "service": "real-time-vocabulary-quiz",
+    }

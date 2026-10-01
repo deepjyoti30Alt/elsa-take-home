@@ -10,6 +10,7 @@ from pydantic import BaseModel
 from quiz_api.infrastructure.resources import create_application_resources
 from quiz_api.logging import configure_logging
 from quiz_api.settings import Settings, get_settings
+from quiz_api.web.api.router import API_PREFIX, api_router
 from quiz_api.web.errors import register_exception_handlers
 from quiz_api.web.middleware.request_context import RequestContextMiddleware
 
@@ -38,6 +39,11 @@ def get_app(settings: Settings | None = None) -> FastAPI:
     app = FastAPI(
         title="Real-Time Vocabulary Quiz API",
         version="0.1.0",
+        summary="REST and SSE backend for host-paced live vocabulary quizzes.",
+        description=(
+            "The service provides durable quiz participation, scoring, and "
+            "real-time leaderboard delivery."
+        ),
         docs_url="/docs",
         redoc_url="/redoc",
         openapi_url="/openapi.json",
@@ -45,6 +51,7 @@ def get_app(settings: Settings | None = None) -> FastAPI:
     )
     app.add_middleware(RequestContextMiddleware)
     register_exception_handlers(app)
+    app.include_router(api_router, prefix=API_PREFIX)
 
     @app.get("/health", response_model=HealthResponse, tags=["operations"])
     async def get_health() -> HealthResponse:
