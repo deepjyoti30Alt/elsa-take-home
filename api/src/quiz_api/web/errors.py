@@ -9,6 +9,20 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
+from quiz_api.services.exceptions import (
+    DomainError,
+    DuplicateAnswerError,
+    InvalidJoinError,
+    InvalidRoundDurationError,
+    ParticipantNotFoundError,
+    QuizNotFoundError,
+    QuizUnavailableError,
+    RoundNotFoundError,
+    RoundNotOpenError,
+    RoundTransitionError,
+)
+from quiz_api.web.rate_limit import RateLimitExceededError
+
 logger = structlog.get_logger(__name__)
 
 STATUS_CODES: Final[dict[int, str]] = {
@@ -43,6 +57,8 @@ def register_exception_handlers(app: FastAPI) -> None:
     """Register the API's consistent exception-to-response mappings."""
     app.add_exception_handler(StarletteHTTPException, http_exception_handler)
     app.add_exception_handler(RequestValidationError, validation_exception_handler)
+    app.add_exception_handler(DomainError, domain_exception_handler)
+    app.add_exception_handler(RateLimitExceededError, rate_limit_exception_handler)
     app.add_exception_handler(Exception, unexpected_exception_handler)
 
 
@@ -75,6 +91,31 @@ async def validation_exception_handler(
         error_code="validation_error",
         message=VALIDATION_ERROR_MESSAGE,
         status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+    )
+
+
+async def domain_exception_handler(request: Request, exception: Exception) -> JSONResponse:
+    """Translate expected business-rule failures without exposing implementation details."""
+    if not isinstance(exception, DomainError):
+        return await unexpected_exception_handler(request, exception)
+    status_code, fallback_message = domain_error_details(exception)
+    return error_response(
+        correlation_id=get_correlation_id(request),
+        error_code=STATUS_CODES[status_code],
+        message=str(exception) or fallback_message,
+        status_code=status_code,
+    )
+
+
+async def rate_limit_exception_handler(request: Request, exception: Exception) -> JSONResponse:
+    """Return the stable rate-limit envelope when an allowance is exhausted."""
+    if not isinstance(exception, RateLimitExceededError):
+        return await unexpected_exception_handler(request, exception)
+    return error_response(
+        correlation_id=get_correlation_id(request),
+        error_code="rate_limited",
+        message="Too many requests. Please retry shortly.",
+        status_code=status.HTTP_429_TOO_MANY_REQUESTS,
     )
 
 
@@ -111,3 +152,22 @@ def get_correlation_id(request: Request) -> str:
     """Get the ID assigned by request middleware without trusting raw headers."""
     request_id = getattr(request.state, "request_id", None)
     return request_id if isinstance(request_id, str) else "unknown"
+
+
+def domain_error_details(exception: DomainError) -> tuple[int, str]:
+    """Map domain errors to stable status codes and safe fallback messages."""
+    if isinstance(exception, (QuizNotFoundError, ParticipantNotFoundError, RoundNotFoundError)):
+        return status.HTTP_404_NOT_FOUND, "The requested quiz resource was not found."
+    if isinstance(exception, (InvalidJoinError, InvalidRoundDurationError)):
+        return status.HTTP_422_UNPROCESSABLE_CONTENT, "The request cannot be processed."
+    if isinstance(
+        exception,
+        (
+            DuplicateAnswerError,
+            QuizUnavailableError,
+            RoundNotOpenError,
+            RoundTransitionError,
+        ),
+    ):
+        return status.HTTP_409_CONFLICT, "The requested operation conflicts with quiz state."
+    return status.HTTP_400_BAD_REQUEST, "The request cannot be completed."

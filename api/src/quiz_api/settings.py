@@ -46,6 +46,8 @@ class Settings(DatabaseSettings):
     leaderboard_tick_ms: int = Field(default=250, ge=250, le=500)
     full_leaderboard_limit: int = Field(default=500, gt=0)
     compact_leaderboard_limit: int = Field(default=50, gt=0)
+    join_rate_limit_per_minute: int = Field(default=10, gt=0, le=100)
+    answer_rate_limit_per_minute: int = Field(default=30, gt=0, le=300)
 
     @field_validator("redis_url")
     @classmethod

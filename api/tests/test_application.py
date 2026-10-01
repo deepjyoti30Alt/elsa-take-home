@@ -4,6 +4,7 @@ from fastapi import FastAPI, HTTPException, Query
 from httpx import ASGITransport, AsyncClient
 
 from quiz_api.application import get_app
+from quiz_api.services.exceptions import RoundNotOpenError
 from quiz_api.settings import Settings
 
 
@@ -38,6 +39,11 @@ def build_error_test_app() -> FastAPI:
         message = "database password must never be returned"
         raise RuntimeError(message)
 
+    @app.get("/domain-error")
+    async def raise_domain_error() -> None:
+        """Raise a domain error that should become a safe conflict response."""
+        raise RoundNotOpenError("This round is closed.")
+
     return app
 
 
@@ -70,6 +76,7 @@ async def test_http_errors_use_a_consistent_public_envelope() -> None:
         expected_response = await client.get("/expected-error")
         validation_response = await client.get("/validation-error?value=0")
         unexpected_response = await client.get("/unexpected-error")
+        domain_response = await client.get("/domain-error")
 
     assert expected_response.status_code == 409
     assert expected_response.json()["error"]["code"] == "conflict"
@@ -80,6 +87,8 @@ async def test_http_errors_use_a_consistent_public_envelope() -> None:
     assert unexpected_response.status_code == 500
     assert unexpected_response.json()["error"]["code"] == "internal_error"
     assert "password" not in unexpected_response.text
+    assert domain_response.status_code == 409
+    assert domain_response.json()["error"]["code"] == "conflict"
 
 
 async def test_openapi_describes_the_versioned_api_boundary() -> None:

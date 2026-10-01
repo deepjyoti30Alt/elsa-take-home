@@ -6,9 +6,11 @@ from uuid import UUID, uuid4
 from fastapi import APIRouter, Header, Query, status
 
 from quiz_api.web.api.quizzes.dependencies import (
+    AnswerRateLimitDependency,
     AnswerServiceDependency,
     AuthenticatedParticipantDependency,
     HostAuthorizationDependency,
+    JoinRateLimitDependency,
     LeaderboardReadServiceDependency,
     ParticipationServiceDependency,
     QuizSnapshotServiceDependency,
@@ -89,6 +91,7 @@ async def submit_answer(
     round_id: UUID,
     request: SubmitAnswerRequest,
     participant: AuthenticatedParticipantDependency,
+    _: AnswerRateLimitDependency,
     answer_service: AnswerServiceDependency,
 ) -> SubmitAnswerResponse:
     """Accept a participant's first answer for an open round, or return its replay."""
@@ -169,6 +172,7 @@ async def get_quiz_snapshot(
 async def join_participant(
     quiz_id: UUID,
     request: JoinParticipantRequest,
+    _: JoinRateLimitDependency,
     participation_service: ParticipationServiceDependency,
     token_service: TokenServiceDependency,
     idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),

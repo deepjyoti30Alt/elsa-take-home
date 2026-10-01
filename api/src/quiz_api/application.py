@@ -13,6 +13,7 @@ from quiz_api.settings import Settings, get_settings
 from quiz_api.web.api.router import API_PREFIX, api_router
 from quiz_api.web.errors import register_exception_handlers
 from quiz_api.web.middleware.request_context import RequestContextMiddleware
+from quiz_api.web.rate_limit import FixedWindowRateLimiter
 
 
 class HealthResponse(BaseModel):
@@ -50,6 +51,7 @@ def get_app(settings: Settings | None = None) -> FastAPI:
         lifespan=lifespan,
     )
     app.state.settings = application_settings
+    app.state.rate_limiter = FixedWindowRateLimiter()
     app.add_middleware(RequestContextMiddleware)
     register_exception_handlers(app)
     app.include_router(api_router, prefix=API_PREFIX)

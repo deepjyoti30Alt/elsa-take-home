@@ -16,6 +16,7 @@ from quiz_api.services.rounds import RoundControlService
 from quiz_api.services.snapshots import QuizSnapshotService
 from quiz_api.settings import Settings
 from quiz_api.web.dependencies import get_db_session
+from quiz_api.web.rate_limit import FixedWindowRateLimiter
 
 participant_bearer_scheme = HTTPBearer(auto_error=False)
 
@@ -98,6 +99,44 @@ def get_authenticated_participant(
         ) from exception
 
 
+async def enforce_join_rate_limit(request: Request) -> None:
+    """Bound unauthenticated participant joins per source address."""
+    settings = cast(Settings, request.app.state.settings)
+    limiter = get_rate_limiter(request)
+    await limiter.check(
+        key=f"join:{get_client_address(request)}",
+        limit=settings.join_rate_limit_per_minute,
+        window_seconds=60,
+    )
+
+
+async def enforce_answer_rate_limit(
+    request: Request,
+    participant: Annotated[TokenClaims, Depends(get_authenticated_participant)],
+) -> None:
+    """Bound answer submissions per authenticated participant and source address."""
+    settings = cast(Settings, request.app.state.settings)
+    limiter = get_rate_limiter(request)
+    await limiter.check(
+        key=f"answer:{participant.participant_id}:{get_client_address(request)}",
+        limit=settings.answer_rate_limit_per_minute,
+        window_seconds=60,
+    )
+
+
+def get_rate_limiter(request: Request) -> FixedWindowRateLimiter:
+    """Return the application-owned limiter or fail safely during misconfiguration."""
+    limiter = getattr(request.app.state, "rate_limiter", None)
+    if not isinstance(limiter, FixedWindowRateLimiter):
+        raise RuntimeError("The application rate limiter is not configured.")
+    return limiter
+
+
+def get_client_address(request: Request) -> str:
+    """Return the immediate peer address for the local deployment rate limit key."""
+    return request.client.host if request.client is not None else "unknown"
+
+
 ParticipationServiceDependency = Annotated[ParticipationService, Depends(get_participation_service)]
 LeaderboardReadServiceDependency = Annotated[
     LeaderboardReadService, Depends(get_leaderboard_read_service)
@@ -105,6 +144,8 @@ LeaderboardReadServiceDependency = Annotated[
 AnswerServiceDependency = Annotated[AnswerService, Depends(get_answer_service)]
 AuthenticatedParticipantDependency = Annotated[TokenClaims, Depends(get_authenticated_participant)]
 HostAuthorizationDependency = Annotated[None, Depends(require_host_token)]
+JoinRateLimitDependency = Annotated[None, Depends(enforce_join_rate_limit)]
 QuizSnapshotServiceDependency = Annotated[QuizSnapshotService, Depends(get_quiz_snapshot_service)]
+AnswerRateLimitDependency = Annotated[None, Depends(enforce_answer_rate_limit)]
 RoundControlServiceDependency = Annotated[RoundControlService, Depends(get_round_control_service)]
 TokenServiceDependency = Annotated[TokenService, Depends(get_token_service)]
