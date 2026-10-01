@@ -1,54 +1,168 @@
 # Real-Time Vocabulary Quiz API
 
-This directory contains the production-style FastAPI component for a live,
-host-paced vocabulary quiz. PostgreSQL is the durable source of truth; local
-Redis provides leaderboard projection and real-time event distribution.
+This directory contains the FastAPI component for a host-paced, live
+vocabulary quiz. PostgreSQL is the durable source of truth for quiz state,
+answers, scores, and the transactional outbox. Redis is provisioned for the
+real-time projection and delivery work that follows this REST foundation.
 
-The API is built incrementally according to the repository's local
-implementation checklist. The project foundation is ready; the application,
-migrations, and domain endpoints are added in subsequent phases.
+The current API supports joining a quiz, reading its public state and
+leaderboard, submitting an answer, and host-controlled round transitions.
+Interactive OpenAPI documentation is available at `/docs` when the service is
+running.
 
 ## Prerequisites
 
 - Python 3.12
 - [uv](https://docs.astral.sh/uv/)
 - Docker Desktop or another Docker-compatible runtime for local Redis
-- A Neon PostgreSQL database (or another PostgreSQL-compatible database)
+- A Neon PostgreSQL database, or another PostgreSQL-compatible database
 
 ## Local setup
 
+Run from this directory:
+
 ```bash
-cd api
 uv sync
 cp .env.example .env
 docker compose up -d redis
 ```
 
-Edit `.env` before starting later API phases:
+Edit `.env` before starting the API:
 
-- Set `QUIZ_API_DATABASE_URL` to the Neon connection URL using the
+- Set `QUIZ_API_DATABASE_URL` to the Neon URL rewritten to use the
   `postgresql+asyncpg` dialect.
 - Replace `QUIZ_API_JWT_SIGNING_KEY` and `QUIZ_API_HOST_DEMO_TOKEN` with
-  unique, long random values.
+  separate random secrets of at least 32 characters.
 - Keep `QUIZ_API_REDIS_URL=redis://localhost:6379/0` when using the supplied
   Compose service.
 
-Check the local Redis service:
+Prepare deterministic demo data and start the server:
+
+```bash
+uv run alembic upgrade head
+uv run python -m quiz_api.seed
+uv run uvicorn quiz_api.application:get_app --factory --reload
+```
+
+The seeded quiz ID is `10000000-0000-0000-0000-000000000001`. The seed is
+idempotent and creates three pending rounds; open one of them through the host
+endpoint before submitting answers.
+
+Check or stop the local Redis service with:
 
 ```bash
 docker compose ps
 docker compose exec redis redis-cli ping
-```
-
-Stop Redis while preserving its local volume:
-
-```bash
 docker compose down
 ```
 
-## Development commands
+## API contract
 
-Run these commands from `api/`:
+All application endpoints are versioned under `/v1`. UUID path values below
+are represented as `{quiz_id}` and `{round_id}`. Every error uses this shape:
+
+```json
+{
+  "error": {
+    "code": "conflict",
+    "correlation_id": "request-id",
+    "message": "The requested operation conflicts with quiz state."
+  }
+}
+```
+
+| Method and path | Purpose | Credentials |
+| --- | --- | --- |
+| `POST /v1/quizzes/{quiz_id}/participants` | Join a quiz and receive quiz-scoped participant and stream tokens. | None; optional `Idempotency-Key`. |
+| `GET /v1/quizzes/{quiz_id}` | Read public quiz state and the active question, never its answer key. | None. |
+| `GET /v1/quizzes/{quiz_id}/leaderboard?limit=50&offset=0` | Read a globally ranked, paginated leaderboard. | None. |
+| `POST /v1/quizzes/{quiz_id}/rounds/{round_id}/answers` | Submit an answer, or safely replay the prior identical submission. | `Authorization: Bearer <participant-token>`. |
+| `POST /v1/quizzes/{quiz_id}/rounds/{round_id}/open` | Open a pending round for a bounded duration. | `X-Host-Token`. |
+| `POST /v1/quizzes/{quiz_id}/rounds/{round_id}/close` | Close the currently open round. | `X-Host-Token`. |
+
+`POST /answers` returns the authoritative correctness, awarded points,
+response time, cumulative score, and `is_replay`. The database clock, rather
+than a client timestamp, decides whether a round is accepting answers.
+
+### Demo sequence
+
+Set the deterministic identifiers used by the seed:
+
+```bash
+export QUIZ_ID=10000000-0000-0000-0000-000000000001
+export ROUND_ID=30000000-0000-0000-0000-000000000001
+```
+
+Join as a participant. Preserve the returned `participant_token` privately;
+the stream token is intentionally scoped only to the future SSE connection.
+
+```bash
+curl -X POST "http://127.0.0.1:8000/v1/quizzes/${QUIZ_ID}/participants" \
+  -H 'Content-Type: application/json' \
+  -H 'Idempotency-Key: demo-ada' \
+  -d '{"display_name":"Ada"}'
+```
+
+Open the round using the value configured in `QUIZ_API_HOST_DEMO_TOKEN`:
+
+```bash
+curl -X POST "http://127.0.0.1:8000/v1/quizzes/${QUIZ_ID}/rounds/${ROUND_ID}/open" \
+  -H "X-Host-Token: ${QUIZ_API_HOST_DEMO_TOKEN}" \
+  -H 'Content-Type: application/json' \
+  -d '{"duration_seconds":30}'
+```
+
+Then submit an answer with the participant token from the join response:
+
+```bash
+curl -X POST "http://127.0.0.1:8000/v1/quizzes/${QUIZ_ID}/rounds/${ROUND_ID}/answers" \
+  -H "Authorization: Bearer ${PARTICIPANT_TOKEN}" \
+  -H 'Content-Type: application/json' \
+  -d '{"answer":"alleviate"}'
+```
+
+Inspect the current standings with:
+
+```bash
+curl "http://127.0.0.1:8000/v1/quizzes/${QUIZ_ID}/leaderboard?limit=50&offset=0"
+```
+
+## Security and delivery behavior
+
+- Participant tokens are signed JWTs scoped to one quiz and cannot authorize
+  stream connections; stream tokens cannot authorize answer commands.
+- Host controls compare `X-Host-Token` using a constant-time comparison.
+- Input schemas bound display names, answers, duration, and pagination.
+- Expected domain failures map to safe 404, 409, or 422 responses; unexpected
+  exceptions do not expose internal details.
+- Join attempts are limited per peer address. Answer attempts are limited per
+  participant and peer address. The demo limiter is process-local; a
+  multi-instance deployment must replace it with an atomic Redis limit.
+- Each response includes `X-Request-ID`, which is also included in error
+  bodies for support correlation.
+
+## Configuration reference
+
+| Variable | Purpose |
+| --- | --- |
+| `QUIZ_API_DATABASE_URL` | Neon/PostgreSQL async SQLAlchemy URL. |
+| `QUIZ_API_REDIS_URL` | Redis endpoint for future projections and pub/sub. |
+| `QUIZ_API_JWT_SIGNING_KEY` | Secret used for participant and stream tokens. |
+| `QUIZ_API_HOST_DEMO_TOKEN` | Secret required by host-only round controls. |
+| `QUIZ_API_PARTICIPANT_TOKEN_TTL_SECONDS` | Participant-token lifetime. |
+| `QUIZ_API_STREAM_TOKEN_TTL_SECONDS` | Short-lived stream-token lifetime. |
+| `QUIZ_API_JOIN_RATE_LIMIT_PER_MINUTE` | Per-address participant-join allowance. |
+| `QUIZ_API_ANSWER_RATE_LIMIT_PER_MINUTE` | Per participant/address answer allowance. |
+| `QUIZ_API_LEADERBOARD_TICK_MS` | Planned coalescing interval for leaderboard broadcasts. |
+| `QUIZ_API_FULL_LEADERBOARD_LIMIT` | Planned participant threshold for full stream payloads. |
+| `QUIZ_API_COMPACT_LEADERBOARD_LIMIT` | Planned top-entry count for large stream payloads. |
+
+Never commit `.env`, Neon credentials, signing keys, participant tokens, or
+host tokens.
+
+## Quality checks
+
+Run these commands from `api/` before submitting changes:
 
 ```bash
 uv run ruff format --check .
@@ -56,47 +170,3 @@ uv run ruff check .
 uv run mypy
 uv run pytest
 ```
-
-The following commands are the stable interface planned for the next phases;
-they will become executable when the corresponding application modules are
-implemented:
-
-```bash
-# Apply the Alembic schema migrations.
-uv run alembic upgrade head
-
-# Create or refresh the deterministic vocabulary quiz used by the demo.
-uv run python -m quiz_api.seed
-
-# Run the API with automatic reload.
-uv run uvicorn quiz_api.application:get_app --factory --reload
-```
-
-## Demo flow
-
-Once all API phases are complete:
-
-1. Apply migrations and run the seed command.
-2. Start Redis and the API.
-3. Join the seeded quiz from two or more clients using the participant endpoint.
-4. Open a round with the host endpoint and `X-Host-Token`.
-5. Submit answers and observe the SSE leaderboard stream update within the
-   configured tick interval.
-6. Close the round, then inspect the final standings and the generated OpenAPI
-   documentation.
-
-## Configuration reference
-
-| Variable | Purpose |
-| --- | --- |
-| `QUIZ_API_DATABASE_URL` | Neon/PostgreSQL async SQLAlchemy URL. |
-| `QUIZ_API_REDIS_URL` | Redis endpoint for leaderboard projection and pub/sub. |
-| `QUIZ_API_JWT_SIGNING_KEY` | Secret used for participant and stream tokens. |
-| `QUIZ_API_HOST_DEMO_TOKEN` | Secret required by host-only round controls. |
-| `QUIZ_API_PARTICIPANT_TOKEN_TTL_SECONDS` | Participant-token lifetime. |
-| `QUIZ_API_STREAM_TOKEN_TTL_SECONDS` | Short-lived SSE URL-token lifetime. |
-| `QUIZ_API_LEADERBOARD_TICK_MS` | Coalescing interval for leaderboard broadcasts. |
-| `QUIZ_API_FULL_LEADERBOARD_LIMIT` | Participant threshold for full stream payloads. |
-| `QUIZ_API_COMPACT_LEADERBOARD_LIMIT` | Number of top entries in large-quiz stream payloads. |
-
-Never commit `.env`, Neon credentials, signing keys, or host tokens.

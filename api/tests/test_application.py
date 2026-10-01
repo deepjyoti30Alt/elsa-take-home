@@ -104,6 +104,10 @@ async def test_openapi_describes_the_versioned_api_boundary() -> None:
     assert openapi["info"]["title"] == "Real-Time Vocabulary Quiz API"
     assert openapi["info"]["version"] == "0.1.0"
     assert "/v1/" in openapi["paths"]
+    assert "/v1/quizzes/{quiz_id}/participants" in openapi["paths"]
+    assert "/v1/quizzes/{quiz_id}/rounds/{round_id}/answers" in openapi["paths"]
+    assert "/v1/quizzes/{quiz_id}/rounds/{round_id}/open" in openapi["paths"]
+    assert "HTTPBearer" in openapi["components"]["securitySchemes"]
     assert metadata_response.json() == {
         "api_version": "v1",
         "service": "real-time-vocabulary-quiz",
