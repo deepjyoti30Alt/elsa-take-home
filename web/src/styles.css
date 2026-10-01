@@ -271,6 +271,29 @@ button:focus-visible {
   color: #deebff;
 }
 
+.button--danger {
+  background: #4a2230;
+  color: #ffd8e2;
+}
+
+.active-round-controls {
+  background: #142b46;
+  border: 1px solid #315a82;
+  border-radius: 0.7rem;
+  margin: 0 0 0.9rem;
+  padding: 0.85rem;
+}
+
+.active-round-controls p {
+  color: #cfe6ff;
+  font-size: 0.9rem;
+  margin: 0 0 0.7rem;
+}
+
+.reset-button {
+  margin-top: 1.25rem;
+}
+
 .timer {
   background: #253c5b;
   border-radius: 0.5rem;

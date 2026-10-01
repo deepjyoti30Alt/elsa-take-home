@@ -1,9 +1,11 @@
 import type {
+  AdvanceRoundResult,
   AnswerResult,
   JoinResponse,
   LeaderboardPage,
   QuizSnapshot,
   RoundTransition,
+  QuizResetResult,
 } from "./types";
 
 interface ApiErrorBody {
@@ -57,12 +59,16 @@ export function getLeaderboard(quizId: string): Promise<LeaderboardPage> {
   );
 }
 
-export function joinQuiz(quizId: string, displayName: string): Promise<JoinResponse> {
+export function joinQuiz(
+  quizId: string,
+  displayName: string,
+  idempotencyKey: string,
+): Promise<JoinResponse> {
   return request<JoinResponse>(`/v1/quizzes/${encodeURIComponent(quizId)}/participants`, {
     body: JSON.stringify({ display_name: displayName }),
     headers: {
       "Content-Type": "application/json",
-      "Idempotency-Key": crypto.randomUUID(),
+      "Idempotency-Key": idempotencyKey,
     },
     method: "POST",
   });
@@ -118,4 +124,26 @@ export function closeRound(
       method: "POST",
     },
   );
+}
+
+export function advanceRound(
+  quizId: string,
+  hostToken: string,
+  durationSeconds: number,
+): Promise<AdvanceRoundResult> {
+  return request<AdvanceRoundResult>(`/v1/quizzes/${encodeURIComponent(quizId)}/rounds/advance`, {
+    body: JSON.stringify({ duration_seconds: durationSeconds }),
+    headers: {
+      "Content-Type": "application/json",
+      "X-Host-Token": hostToken,
+    },
+    method: "POST",
+  });
+}
+
+export function resetQuiz(quizId: string, hostToken: string): Promise<QuizResetResult> {
+  return request<QuizResetResult>(`/v1/quizzes/${encodeURIComponent(quizId)}/reset`, {
+    headers: { "X-Host-Token": hostToken },
+    method: "POST",
+  });
 }

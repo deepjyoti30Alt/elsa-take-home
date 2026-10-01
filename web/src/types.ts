@@ -59,6 +59,17 @@ export interface RoundTransition {
   status: RoundStatus;
 }
 
+export interface AdvanceRoundResult {
+  closed_round_id: string;
+  completed: boolean;
+  next_round: RoundTransition | null;
+}
+
+export interface QuizResetResult {
+  removed_participants: number;
+  status: QuizStatus;
+}
+
 export interface SnapshotEvent {
   current_round: QuizRound | null;
   event_version: 1;

@@ -2,12 +2,13 @@ import { FormEvent, useCallback, useEffect, useRef, useState } from "react";
 
 import {
   ApiError,
-  closeRound,
+  advanceRound,
   getLeaderboard,
   getQuiz,
   getStreamUrl,
   joinQuiz,
   openRound,
+  resetQuiz,
   submitAnswer,
 } from "./api";
 import type {
@@ -22,6 +23,7 @@ import type {
 
 const DEMO_QUIZ_ID = "10000000-0000-0000-0000-000000000001";
 const DEMO_FIRST_ROUND_ID = "30000000-0000-0000-0000-000000000001";
+const JOIN_KEY_PREFIX = "vocabulary-live:join-key:";
 
 type ConnectionState = "connected" | "connecting" | "disconnected";
 type Workspace = "host" | "player";
@@ -49,13 +51,25 @@ function secondsRemaining(closesAt: string | null, now: number): number | null {
   return Math.max(0, Math.ceil((new Date(closesAt).getTime() - now) / 1_000));
 }
 
+function participantJoinKey(quizId: string): string {
+  // Keep one idempotency key per browser session so an existing player can reconnect.
+  const storageKey = `${JOIN_KEY_PREFIX}${quizId}`;
+  const storedKey = window.sessionStorage.getItem(storageKey);
+  if (storedKey !== null) {
+    return storedKey;
+  }
+  const joinKey = crypto.randomUUID();
+  window.sessionStorage.setItem(storageKey, joinKey);
+  return joinKey;
+}
+
 export function App(): JSX.Element {
   const [workspace, setWorkspace] = useState<Workspace>("player");
   const [quizId, setQuizId] = useState(DEMO_QUIZ_ID);
   const [displayName, setDisplayName] = useState("");
   const [hostToken, setHostToken] = useState("");
   const [hostRoundId, setHostRoundId] = useState(DEMO_FIRST_ROUND_ID);
-  const [durationSeconds, setDurationSeconds] = useState(30);
+  const [durationSeconds, setDurationSeconds] = useState(120);
   const [isHostLoggedIn, setIsHostLoggedIn] = useState(false);
   const [participantToken, setParticipantToken] = useState<string | null>(null);
   const [participantId, setParticipantId] = useState<string | null>(null);
@@ -192,7 +206,7 @@ export function App(): JSX.Element {
     setIsJoining(true);
     latestSequence.current = -1;
     try {
-      const join = await joinQuiz(quizId, normalizedName);
+      const join = await joinQuiz(quizId, normalizedName, participantJoinKey(quizId));
       setParticipantId(join.participant_id);
       setParticipantToken(join.participant_token);
       setStreamPath(join.stream_url);
@@ -247,26 +261,59 @@ export function App(): JSX.Element {
     }
   }
 
-  async function handleHostAction(action: "open" | "close"): Promise<void> {
-    const roundId = action === "close" ? quiz?.current_round?.id : hostRoundId;
-    if (roundId === undefined || roundId === "") {
-      setError("Enter a pending round ID before opening a round.");
+  async function handleOpenRound(): Promise<void> {
+    if (hostRoundId === "") {
+      setError("Enter a pending round ID before starting the quiz.");
       return;
     }
 
     setError(null);
     setIsHostActionRunning(true);
     try {
-      if (action === "open") {
-        await openRound(quizId, roundId, hostToken, durationSeconds);
-        setNotice("Round opened. Players receive it through their SSE streams.");
-      } else {
-        await closeRound(quizId, roundId, hostToken);
-        setNotice("Round closed. The final leaderboard event is on its way.");
-      }
+      await openRound(quizId, hostRoundId, hostToken, durationSeconds);
+      setNotice("First question opened. Players receive it through their SSE streams.");
       await refreshPublicState(quizId);
-    } catch (hostError) {
-      setError(errorMessage(hostError));
+    } catch (openError) {
+      setError(errorMessage(openError));
+    } finally {
+      setIsHostActionRunning(false);
+    }
+  }
+
+  async function handleAdvanceRound(): Promise<void> {
+    setError(null);
+    setIsHostActionRunning(true);
+    try {
+      const result = await advanceRound(quizId, hostToken, durationSeconds);
+      setNotice(
+        result.completed
+          ? "The fifth and final question is closed. The quiz is complete."
+          : "Moved all players to the next question.",
+      );
+      await refreshPublicState(quizId);
+    } catch (advanceError) {
+      setError(errorMessage(advanceError));
+    } finally {
+      setIsHostActionRunning(false);
+    }
+  }
+
+  async function handleResetQuiz(): Promise<void> {
+    if (!window.confirm("Reset this quiz? This removes all players, answers, and scores.")) {
+      return;
+    }
+
+    setError(null);
+    setIsHostActionRunning(true);
+    try {
+      const result = await resetQuiz(quizId, hostToken);
+      setNotice(
+        `Quiz reset. Removed ${result.removed_participants} players; all five questions are ready again. Players must rejoin.`,
+      );
+      setHostRoundId(DEMO_FIRST_ROUND_ID);
+      await refreshPublicState(quizId);
+    } catch (resetError) {
+      setError(errorMessage(resetError));
     } finally {
       setIsHostActionRunning(false);
     }
@@ -279,7 +326,8 @@ export function App(): JSX.Element {
     selectedAnswer !== "" &&
     participantToken !== null &&
     !isSubmitting &&
-    answerResult === null;
+    answerResult === null &&
+    timeRemaining !== 0;
 
   return (
     <main className="app-shell">
@@ -359,7 +407,11 @@ export function App(): JSX.Element {
                         <button
                           aria-pressed={selectedAnswer === option}
                           className={`answer-option ${selectedAnswer === option ? "answer-option--selected" : ""}`}
-                          disabled={activeRound.status !== "open" || answerResult !== null}
+                          disabled={
+                            activeRound.status !== "open" ||
+                            answerResult !== null ||
+                            timeRemaining === 0
+                          }
                           key={option}
                           onClick={() => setSelectedAnswer(option)}
                           type="button"
@@ -371,6 +423,9 @@ export function App(): JSX.Element {
                     <button className="button button--primary answer-submit" disabled={!canSubmit} onClick={() => void handleSubmitAnswer()} type="button">
                       {isSubmitting ? "Submitting…" : "Submit answer"}
                     </button>
+                    {timeRemaining === 0 ? (
+                      <p className="result result--incorrect">Time is up. The host will move everyone to the next question.</p>
+                    ) : null}
                     {answerResult !== null ? (
                       <p className={`result ${answerResult.is_correct ? "result--correct" : "result--incorrect"}`}>
                         {answerResult.is_correct ? "Correct" : "Incorrect"} · {answerResult.awarded_points} points · total {answerResult.total_score}
@@ -389,11 +444,7 @@ export function App(): JSX.Element {
                 </div>
                 <span className="host-status">Logged in</span>
               </div>
-              <p className="empty-state">Player scoring and live streams remain separate from host controls.</p>
-              <label>
-                Pending round ID
-                <input onChange={(event) => setHostRoundId(event.target.value)} value={hostRoundId} />
-              </label>
+              <p className="empty-state">One question is one round. Advance moves every player together.</p>
               <label>
                 Duration (seconds)
                 <input
@@ -404,24 +455,44 @@ export function App(): JSX.Element {
                   value={durationSeconds}
                 />
               </label>
-              <div className="button-row">
-                <button
-                  className="button button--primary"
-                  disabled={isHostActionRunning}
-                  onClick={() => void handleHostAction("open")}
-                  type="button"
-                >
-                  Open round
-                </button>
-                <button
-                  className="button button--quiet"
-                  disabled={isHostActionRunning || activeRound?.status !== "open"}
-                  onClick={() => void handleHostAction("close")}
-                  type="button"
-                >
-                  Close current round
-                </button>
-              </div>
+              {activeRound === null ? (
+                <>
+                  <label>
+                    First pending round ID
+                    <input onChange={(event) => setHostRoundId(event.target.value)} value={hostRoundId} />
+                  </label>
+                  <button
+                    className="button button--primary"
+                    disabled={isHostActionRunning || quiz?.status === "completed"}
+                    onClick={() => void handleOpenRound()}
+                    type="button"
+                  >
+                    {quiz?.status === "completed" ? "Quiz complete — reset to replay" : "Start first question"}
+                  </button>
+                </>
+              ) : (
+                <div className="active-round-controls">
+                  <p>
+                    Question active · {timeRemaining === 0 ? "time expired" : `${timeRemaining ?? "…"} seconds remaining`}
+                  </p>
+                  <button
+                    className="button button--primary"
+                    disabled={isHostActionRunning}
+                    onClick={() => void handleAdvanceRound()}
+                    type="button"
+                  >
+                    Next question
+                  </button>
+                </div>
+              )}
+              <button
+                className="button button--danger reset-button"
+                disabled={isHostActionRunning}
+                onClick={() => void handleResetQuiz()}
+                type="button"
+              >
+                Reset quiz for another test
+              </button>
             </section>
           ) : (
             <form className="panel login-panel" onSubmit={handleHostLogin}>
