@@ -100,10 +100,6 @@ async def seed_demo_data(session: AsyncSession) -> SeedResult:
             )
             created_rounds += 1
 
-    if created_quiz:
-        await session.flush()
-        quiz.current_round_id = demo_round_id(DEMO_QUESTIONS[0])
-
     return SeedResult(
         created_questions=created_questions,
         created_quiz=created_quiz,
