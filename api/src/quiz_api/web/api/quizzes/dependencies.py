@@ -10,12 +10,16 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from quiz_api.security.tokens import TokenClaims, TokenService, TokenValidationError
 from quiz_api.services.answers import AnswerService
+from quiz_api.services.leaderboard_cache import (
+    RedisLeaderboardReader,
+    RedisLeaderboardReadTransport,
+)
 from quiz_api.services.leaderboard_reads import LeaderboardReadService
 from quiz_api.services.participation import ParticipationService
 from quiz_api.services.rounds import RoundControlService
 from quiz_api.services.snapshots import QuizSnapshotService
 from quiz_api.settings import Settings
-from quiz_api.web.dependencies import get_db_session
+from quiz_api.web.dependencies import get_db_session, get_redis
 from quiz_api.web.rate_limit import FixedWindowRateLimiter
 
 participant_bearer_scheme = HTTPBearer(auto_error=False)
@@ -43,9 +47,10 @@ async def get_quiz_snapshot_service(
 
 async def get_leaderboard_read_service(
     session: Annotated[AsyncSession, Depends(get_db_session)],
+    redis: Annotated[RedisLeaderboardReadTransport, Depends(get_redis)],
 ) -> LeaderboardReadService:
     """Create a leaderboard read service bound to the request database session."""
-    return LeaderboardReadService(session)
+    return LeaderboardReadService(session, RedisLeaderboardReader(redis))
 
 
 async def get_answer_service(

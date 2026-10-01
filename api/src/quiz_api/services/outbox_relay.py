@@ -1,6 +1,7 @@
 """Durable outbox relay for Redis leaderboard projection and quiz events."""
 
 import asyncio
+import json
 from collections.abc import Awaitable, Iterable, Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -17,7 +18,7 @@ from quiz_api.events import (
     outbox_event_to_envelope,
     quiz_channel,
 )
-from quiz_api.services.leaderboard_ticker import LeaderboardChangeTracker
+from quiz_api.services.leaderboard_changes import LeaderboardChangeTracker
 
 LEADERBOARD_SCORE_SCALE = 1_000_000_000
 
@@ -77,6 +78,15 @@ class RedisLeaderboardProjection:
             leaderboard_names_key(quiz_id),
             mapping={participant_id: payload.display_name},
         )
+        await self._redis.hset(
+            leaderboard_totals_key(quiz_id),
+            mapping={
+                participant_id: serialize_totals(
+                    total_response_ms=payload.total_response_ms,
+                    total_score=payload.total_score,
+                )
+            },
+        )
 
     async def replace_quiz(
         self,
@@ -87,17 +97,27 @@ class RedisLeaderboardProjection:
         """Replace a quiz projection from durable totals after cache loss or repair."""
         score_mapping: dict[str, float] = {}
         name_mapping: dict[str, str] = {}
+        totals_mapping: dict[str, str] = {}
         for participant in participants:
             participant_id = str(participant.participant_id)
             name_mapping[participant_id] = participant.display_name
+            totals_mapping[participant_id] = serialize_totals(
+                total_response_ms=participant.total_response_ms,
+                total_score=participant.total_score,
+            )
             score_mapping[participant_id] = leaderboard_sort_score(
                 participant.total_score,
                 participant.total_response_ms,
             )
-        await self._redis.delete(leaderboard_key(quiz_id), leaderboard_names_key(quiz_id))
+        await self._redis.delete(
+            leaderboard_key(quiz_id),
+            leaderboard_names_key(quiz_id),
+            leaderboard_totals_key(quiz_id),
+        )
         if score_mapping:
             await self._redis.zadd(leaderboard_key(quiz_id), score_mapping)
             await self._redis.hset(leaderboard_names_key(quiz_id), mapping=name_mapping)
+            await self._redis.hset(leaderboard_totals_key(quiz_id), mapping=totals_mapping)
         return len(score_mapping)
 
 
@@ -179,6 +199,11 @@ def leaderboard_names_key(quiz_id: UUID) -> str:
     return f"quiz:{quiz_id}:leaderboard:names"
 
 
+def leaderboard_totals_key(quiz_id: UUID) -> str:
+    """Return the hash key storing exact score totals for Redis leaderboard reads."""
+    return f"quiz:{quiz_id}:leaderboard:totals"
+
+
 def leaderboard_sort_score(total_score: int, total_response_ms: int) -> float:
     """Encode score-descending and response-time-ascending order for Redis ZRANGE."""
     return float((-total_score * LEADERBOARD_SCORE_SCALE) + total_response_ms)
@@ -187,3 +212,11 @@ def leaderboard_sort_score(total_score: int, total_response_ms: int) -> float:
 def retry_delay_seconds(failures: int, maximum_seconds: float) -> float:
     """Return bounded exponential retry delay for consecutive relay failures."""
     return min(float(2 ** max(failures - 1, 0)), maximum_seconds)
+
+
+def serialize_totals(*, total_response_ms: int, total_score: int) -> str:
+    """Serialize exact durable totals kept alongside the sorted-set ordering score."""
+    return json.dumps(
+        {"total_response_ms": total_response_ms, "total_score": total_score},
+        separators=(",", ":"),
+    )

@@ -12,6 +12,7 @@ from quiz_api.services.outbox_relay import (
     leaderboard_key,
     leaderboard_names_key,
     leaderboard_sort_score,
+    leaderboard_totals_key,
     retry_delay_seconds,
 )
 
@@ -24,6 +25,7 @@ class FakeRedis:
 
     def __init__(self) -> None:
         """Initialize the command recording collections."""
+        self.deleted: tuple[str, ...] = ()
         self.hashes: list[tuple[str, dict[str, str]]] = []
         self.published: list[tuple[str, str]] = []
         self.sorted_sets: list[tuple[str, dict[str, float]]] = []
@@ -85,7 +87,8 @@ async def test_projection_writes_absolute_totals_and_name_for_answer_events() ->
             {str(PARTICIPANT_ID): leaderboard_sort_score(195, 300)},
         )
     ]
-    assert redis.hashes == [(leaderboard_names_key(QUIZ_ID), {str(PARTICIPANT_ID): "Ada"})]
+    assert redis.hashes[0] == (leaderboard_names_key(QUIZ_ID), {str(PARTICIPANT_ID): "Ada"})
+    assert redis.hashes[1][0] == leaderboard_totals_key(QUIZ_ID)
 
 
 async def test_publisher_serializes_the_versioned_envelope_to_the_quiz_channel() -> None:
@@ -117,7 +120,11 @@ async def test_projection_rebuild_replaces_existing_keys_with_durable_totals() -
     )
 
     assert rebuilt_count == 1
-    assert redis.deleted == (leaderboard_key(QUIZ_ID), leaderboard_names_key(QUIZ_ID))
+    assert redis.deleted == (
+        leaderboard_key(QUIZ_ID),
+        leaderboard_names_key(QUIZ_ID),
+        leaderboard_totals_key(QUIZ_ID),
+    )
     assert redis.sorted_sets[0][1] == {str(PARTICIPANT_ID): leaderboard_sort_score(195, 300)}
 
 
