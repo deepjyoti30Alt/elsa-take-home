@@ -7,11 +7,44 @@ from fastapi import APIRouter, Header, status
 
 from quiz_api.web.api.quizzes.dependencies import (
     ParticipationServiceDependency,
+    QuizSnapshotServiceDependency,
     TokenServiceDependency,
 )
-from quiz_api.web.api.quizzes.schemas import JoinParticipantRequest, JoinParticipantResponse
+from quiz_api.web.api.quizzes.schemas import (
+    JoinParticipantRequest,
+    JoinParticipantResponse,
+    QuestionSnapshotResponse,
+    QuizSnapshotResponse,
+    RoundSnapshotResponse,
+)
 
 router = APIRouter(prefix="/quizzes", tags=["participants"])
+
+
+@router.get("/{quiz_id}", response_model=QuizSnapshotResponse, tags=["quizzes"])
+async def get_quiz_snapshot(
+    quiz_id: UUID,
+    snapshot_service: QuizSnapshotServiceDependency,
+) -> QuizSnapshotResponse:
+    """Return client-visible quiz state without exposing answer keys."""
+    snapshot = await snapshot_service.get_snapshot(quiz_id)
+    current_round = None
+    if snapshot.current_round is not None:
+        current_round = RoundSnapshotResponse(
+            closes_at=snapshot.current_round.closes_at,
+            id=snapshot.current_round.id,
+            opens_at=snapshot.current_round.opens_at,
+            question=QuestionSnapshotResponse(
+                options=snapshot.current_round.question.options,
+                prompt=snapshot.current_round.question.prompt,
+            ),
+            status=snapshot.current_round.status,
+        )
+    return QuizSnapshotResponse(
+        current_round=current_round,
+        id=snapshot.id,
+        status=snapshot.status,
+    )
 
 
 @router.post(

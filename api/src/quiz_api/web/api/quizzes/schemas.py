@@ -1,8 +1,11 @@
 """Pydantic contracts for quiz participation and state endpoints."""
 
+from datetime import datetime
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field
+
+from quiz_api.database.models import QuizStatus, RoundStatus
 
 
 class JoinParticipantRequest(BaseModel):
@@ -20,3 +23,28 @@ class JoinParticipantResponse(BaseModel):
     participant_token: str
     quiz_id: UUID
     stream_url: str
+
+
+class QuestionSnapshotResponse(BaseModel):
+    """Presentation-safe active-question content for a quiz snapshot."""
+
+    options: tuple[str, ...]
+    prompt: str
+
+
+class RoundSnapshotResponse(BaseModel):
+    """Current shared-round state delivered to a quiz client."""
+
+    closes_at: datetime | None
+    id: UUID
+    opens_at: datetime | None
+    question: QuestionSnapshotResponse
+    status: RoundStatus
+
+
+class QuizSnapshotResponse(BaseModel):
+    """Client-visible quiz lifecycle state and optional current round."""
+
+    current_round: RoundSnapshotResponse | None
+    id: UUID
+    status: QuizStatus

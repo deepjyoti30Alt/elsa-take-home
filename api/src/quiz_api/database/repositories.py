@@ -59,6 +59,12 @@ class QuizRepository:
         result = await self._session.execute(statement)
         return result.scalar_one_or_none()
 
+    async def get_round(self, quiz_id: UUID, round_id: UUID) -> Round | None:
+        """Return a round by ID without acquiring an answer or transition lock."""
+        statement = select(Round).where(Round.id == round_id, Round.quiz_id == quiz_id)
+        result = await self._session.execute(statement)
+        return result.scalar_one_or_none()
+
     async def get_round_for_update(self, quiz_id: UUID, round_id: UUID) -> Round | None:
         """Lock a round exclusively for a host state transition."""
         statement = (
