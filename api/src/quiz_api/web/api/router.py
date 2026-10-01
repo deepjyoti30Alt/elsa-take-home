@@ -5,10 +5,13 @@ from typing import Final, Literal
 from fastapi import APIRouter
 from pydantic import BaseModel
 
+from quiz_api.web.api.quizzes.router import router as quizzes_router
+
 API_PREFIX: Final[str] = "/v1"
 PUBLIC_API_VERSION: Final[Literal["v1"]] = "v1"
 
 api_router = APIRouter()
+api_router.include_router(quizzes_router)
 
 
 class ApiMetadataResponse(BaseModel):
