@@ -41,11 +41,15 @@ class ParticipationService:
         normalized_join_key = normalize_join_key(join_key)
 
         async with self._session.begin():
-            quiz = await self._quizzes.get_quiz(quiz_id)
+            quiz = await self._quizzes.get_quiz_for_update(quiz_id)
             if quiz is None:
                 raise QuizNotFoundError
-            if quiz.status is QuizStatus.COMPLETED:
-                raise QuizUnavailableError
+            existing_participant = await self._participants.get_by_join_key(
+                quiz_id, normalized_join_key
+            )
+            if existing_participant is not None:
+                return JoinResult(created=False, participant=existing_participant)
+            ensure_new_participant_join_allowed(quiz.status)
 
             participant, created = await self._participants.create_or_get_by_join_key(
                 display_name=normalized_display_name,
@@ -54,6 +58,13 @@ class ParticipationService:
                 token_hash=create_token_hash(),
             )
         return JoinResult(created=created, participant=participant)
+
+
+def ensure_new_participant_join_allowed(status: QuizStatus) -> None:
+    """Reject new participants once a host-paced quiz has started or finished."""
+    if status is not QuizStatus.DRAFT:
+        message = "Quiz participation is closed because the quiz has already started."
+        raise QuizUnavailableError(message)
 
 
 def normalize_display_name(display_name: str) -> str:

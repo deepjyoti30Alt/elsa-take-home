@@ -102,3 +102,11 @@ class RoundTransitionResponse(BaseModel):
     opens_at: datetime
     round_id: UUID
     status: RoundStatus
+
+
+class AdvanceRoundResponse(BaseModel):
+    """Host-visible result of advancing to the next question or completing a quiz."""
+
+    closed_round_id: UUID
+    completed: bool
+    next_round: RoundTransitionResponse | None

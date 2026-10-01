@@ -26,6 +26,7 @@ from quiz_api.web.api.quizzes.dependencies import (
     TokenServiceDependency,
 )
 from quiz_api.web.api.quizzes.schemas import (
+    AdvanceRoundResponse,
     JoinParticipantRequest,
     JoinParticipantResponse,
     LeaderboardEntryResponse,
@@ -138,6 +139,37 @@ async def close_round(
         opens_at=result.opens_at,
         round_id=result.round_id,
         status=result.status,
+    )
+
+
+@router.post(
+    "/{quiz_id}/rounds/advance",
+    response_model=AdvanceRoundResponse,
+    tags=["host-controls"],
+)
+async def advance_round(
+    quiz_id: UUID,
+    request: OpenRoundRequest,
+    _: HostAuthorizationDependency,
+    round_service: RoundControlServiceDependency,
+) -> AdvanceRoundResponse:
+    """Close the current question and immediately open the next pending question."""
+    result = await round_service.advance_round(
+        duration_seconds=request.duration_seconds,
+        quiz_id=quiz_id,
+    )
+    next_round = None
+    if result.next_round is not None:
+        next_round = RoundTransitionResponse(
+            closes_at=result.next_round.closes_at,
+            opens_at=result.next_round.opens_at,
+            round_id=result.next_round.round_id,
+            status=result.next_round.status,
+        )
+    return AdvanceRoundResponse(
+        closed_round_id=result.closed_round_id,
+        completed=result.completed,
+        next_round=next_round,
     )
 
 

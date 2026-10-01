@@ -2,9 +2,11 @@
 
 import pytest
 
-from quiz_api.services.exceptions import InvalidJoinError
+from quiz_api.database.models import QuizStatus
+from quiz_api.services.exceptions import InvalidJoinError, QuizUnavailableError
 from quiz_api.services.participation import (
     create_token_hash,
+    ensure_new_participant_join_allowed,
     normalize_display_name,
     normalize_join_key,
 )
@@ -37,3 +39,10 @@ def test_token_hashes_are_non_reversible_and_unique_per_join() -> None:
 
     assert len(first_hash) == 64
     assert first_hash != second_hash
+
+
+@pytest.mark.parametrize("status", [QuizStatus.ACTIVE, QuizStatus.COMPLETED])
+def test_new_participants_cannot_join_after_a_quiz_starts(status: QuizStatus) -> None:
+    """Only an existing idempotent join may be recovered after the host begins a quiz."""
+    with pytest.raises(QuizUnavailableError, match="participation is closed"):
+        ensure_new_participant_join_allowed(status)

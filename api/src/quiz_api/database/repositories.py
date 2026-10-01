@@ -73,6 +73,18 @@ class QuizRepository:
         result = await self._session.execute(statement)
         return result.scalar_one_or_none()
 
+    async def get_next_pending_round_for_update(self, quiz_id: UUID) -> Round | None:
+        """Lock the earliest pending round so host advancement is serialized."""
+        statement = (
+            select(Round)
+            .where(Round.quiz_id == quiz_id, Round.status == "pending")
+            .order_by(Round.created_at, Round.id)
+            .limit(1)
+            .with_for_update()
+        )
+        result = await self._session.execute(statement)
+        return result.scalar_one_or_none()
+
     async def get_question(self, question_id: UUID) -> Question | None:
         """Return the immutable question associated with a round."""
         result = await self._session.execute(select(Question).where(Question.id == question_id))

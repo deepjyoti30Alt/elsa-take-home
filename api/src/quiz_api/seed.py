@@ -52,6 +52,18 @@ DEMO_QUESTIONS: Final[tuple[SeedQuestion, ...]] = (
         options=("lucid", "tedious", "scarce", "rigid"),
         correct_answer="lucid",
     ),
+    SeedQuestion(
+        id=UUID("20000000-0000-0000-0000-000000000004"),
+        prompt="Which word means to officially cancel or take back a decision?",
+        options=("revoke", "clarify", "preserve", "concede"),
+        correct_answer="revoke",
+    ),
+    SeedQuestion(
+        id=UUID("20000000-0000-0000-0000-000000000005"),
+        prompt="Which word means likely to happen or exist in the future?",
+        options=("imminent", "distant", "fragile", "obscure"),
+        correct_answer="imminent",
+    ),
 )
 
 

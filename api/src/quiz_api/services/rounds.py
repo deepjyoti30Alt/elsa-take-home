@@ -33,6 +33,15 @@ class RoundTransitionResult:
     status: RoundStatus
 
 
+@dataclass(frozen=True, slots=True)
+class AdvanceRoundResult:
+    """Authoritative result of closing one round and opening the next when available."""
+
+    closed_round_id: UUID
+    completed: bool
+    next_round: RoundTransitionResult | None
+
+
 class RoundControlService:
     """Open and close one shared round at a time for a host-paced quiz."""
 
@@ -125,6 +134,87 @@ class RoundControlService:
                 opens_at=round_.opens_at,
                 round_id=round_.id,
                 status=round_.status,
+            )
+
+    async def advance_round(
+        self,
+        *,
+        duration_seconds: int,
+        quiz_id: UUID,
+    ) -> AdvanceRoundResult:
+        """Close the current question and atomically open the earliest pending question."""
+        validate_round_duration(duration_seconds)
+        async with self._session.begin():
+            quiz = await self._quizzes.get_quiz_for_update(quiz_id)
+            if quiz is None:
+                raise QuizNotFoundError
+            if quiz.current_round_id is None:
+                message = "There is no open round to advance."
+                raise RoundTransitionError(message)
+            current_round = await self._quizzes.get_round_for_update(quiz_id, quiz.current_round_id)
+            if current_round is None or current_round.status is not RoundStatus.OPEN:
+                message = "The current round cannot be advanced in its current state."
+                raise RoundTransitionError(message)
+            if current_round.opens_at is None:
+                message = "An open round is missing its open timestamp."
+                raise RuntimeError(message)
+
+            closed_at = await get_database_clock(self._session)
+            current_round.closes_at = closed_at
+            current_round.status = RoundStatus.CLOSED
+            close_sequence = await self._outbox.allocate_sequence(quiz_id)
+            self._outbox.add_event(
+                OutboxEvent(
+                    payload=round_event_payload(
+                        current_round.id,
+                        RoundStatus.CLOSED,
+                        current_round.opens_at,
+                        closed_at,
+                    ),
+                    quiz_id=quiz_id,
+                    seq=close_sequence,
+                    type=OutboxEventType.ROUND_CLOSED,
+                )
+            )
+
+            next_round = await self._quizzes.get_next_pending_round_for_update(quiz_id)
+            if next_round is None:
+                quiz.current_round_id = None
+                quiz.status = QuizStatus.COMPLETED
+                await self._session.flush()
+                return AdvanceRoundResult(
+                    closed_round_id=current_round.id,
+                    completed=True,
+                    next_round=None,
+                )
+
+            opens_at = await get_database_clock(self._session)
+            closes_at = opens_at + timedelta(seconds=duration_seconds)
+            next_round.closes_at = closes_at
+            next_round.opens_at = opens_at
+            next_round.status = RoundStatus.OPEN
+            quiz.current_round_id = next_round.id
+            open_sequence = await self._outbox.allocate_sequence(quiz_id)
+            self._outbox.add_event(
+                OutboxEvent(
+                    payload=round_event_payload(
+                        next_round.id, RoundStatus.OPEN, opens_at, closes_at
+                    ),
+                    quiz_id=quiz_id,
+                    seq=open_sequence,
+                    type=OutboxEventType.ROUND_OPENED,
+                )
+            )
+            await self._session.flush()
+            return AdvanceRoundResult(
+                closed_round_id=current_round.id,
+                completed=False,
+                next_round=RoundTransitionResult(
+                    closes_at=closes_at,
+                    opens_at=opens_at,
+                    round_id=next_round.id,
+                    status=next_round.status,
+                ),
             )
 
 

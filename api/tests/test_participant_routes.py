@@ -12,7 +12,7 @@ from quiz_api.services.answers import AnswerResult
 from quiz_api.services.leaderboard import RankedStanding
 from quiz_api.services.leaderboard_reads import LeaderboardPage
 from quiz_api.services.participation import JoinResult
-from quiz_api.services.rounds import RoundTransitionResult
+from quiz_api.services.rounds import AdvanceRoundResult, RoundTransitionResult
 from quiz_api.services.snapshots import QuestionSnapshot, QuizSnapshot, RoundSnapshot
 from quiz_api.web.api.quizzes.dependencies import (
     get_answer_service,
@@ -127,6 +127,20 @@ class FakeRoundControlService:
             opens_at=opens_at,
             round_id=ROUND_ID,
             status=RoundStatus.CLOSED,
+        )
+
+    async def advance_round(self, **_: object) -> AdvanceRoundResult:
+        """Return the next opened question after atomically closing the prior one."""
+        opens_at = datetime(2026, 10, 1, 12, 0, 15, tzinfo=UTC)
+        return AdvanceRoundResult(
+            closed_round_id=ROUND_ID,
+            completed=False,
+            next_round=RoundTransitionResult(
+                closes_at=opens_at + timedelta(seconds=30),
+                opens_at=opens_at,
+                round_id=UUID("30000000-0000-0000-0000-000000000005"),
+                status=RoundStatus.OPEN,
+            ),
         )
 
 
@@ -277,6 +291,25 @@ async def test_host_round_controls_return_authoritative_transitions() -> None:
     assert opened.json()["status"] == "open"
     assert closed.status_code == 200
     assert closed.json()["status"] == "closed"
+
+
+async def test_host_can_advance_to_the_next_question() -> None:
+    """The host shortcut returns the next open round without exposing answer content."""
+    app = get_app(build_test_settings())
+    app.dependency_overrides[get_round_control_service] = FakeRoundControlService
+    transport = ASGITransport(app=app)
+    headers = {"X-Host-Token": "b" * 32}
+
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        response = await client.post(
+            f"/v1/quizzes/{QUIZ_ID}/rounds/advance",
+            headers=headers,
+            json={"duration_seconds": 30},
+        )
+
+    assert response.status_code == 200
+    assert response.json()["closed_round_id"] == str(ROUND_ID)
+    assert response.json()["next_round"]["status"] == "open"
 
 
 async def test_event_stream_rejects_an_invalid_query_token_before_connecting() -> None:
