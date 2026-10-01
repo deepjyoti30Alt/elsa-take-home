@@ -127,6 +127,7 @@ class AnswerService:
             self._outbox.add_event(
                 OutboxEvent(
                     payload=answer_accepted_payload(
+                        display_name=participant.display_name,
                         participant_id=participant.id,
                         score=score,
                         total_response_ms=total_response_ms,
@@ -197,6 +198,7 @@ def ensure_round_is_open(
 
 def answer_accepted_payload(
     *,
+    display_name: str,
     participant_id: UUID,
     score: ScoreResult,
     total_response_ms: int,
@@ -204,6 +206,7 @@ def answer_accepted_payload(
 ) -> dict[str, bool | int | str]:
     """Build the versioned durable payload consumed by projection workers."""
     return {
+        "display_name": display_name,
         "event_version": ANSWER_ACCEPTED_EVENT_VERSION,
         "is_correct": score.is_correct,
         "participant_id": str(participant_id),

@@ -21,6 +21,7 @@ CLOSES_AT = OPENS_AT + timedelta(seconds=10)
 def test_answer_payload_contains_projection_totals() -> None:
     """The outbox payload contains absolute values safe for retrying projections."""
     payload = answer_accepted_payload(
+        display_name="Ada",
         participant_id=UUID("10000000-0000-0000-0000-000000000001"),
         score=ScoreResult(awarded_points=175, is_correct=True, response_ms=2500),
         total_response_ms=2500,
@@ -28,6 +29,7 @@ def test_answer_payload_contains_projection_totals() -> None:
     )
 
     assert payload == {
+        "display_name": "Ada",
         "event_version": 1,
         "is_correct": True,
         "participant_id": "10000000-0000-0000-0000-000000000001",

@@ -14,6 +14,7 @@ EVENT_SCHEMA_VERSION: Final[Literal[1]] = 1
 class AnswerAcceptedEventPayload(BaseModel):
     """Durable score totals emitted after one answer transaction commits."""
 
+    display_name: str
     event_version: Literal[1]
     is_correct: bool
     participant_id: UUID

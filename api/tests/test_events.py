@@ -15,6 +15,7 @@ def test_answer_outbox_event_converts_to_a_versioned_wire_envelope() -> None:
     event = OutboxEvent(
         created_at=datetime(2026, 10, 1, 12, tzinfo=UTC),
         payload={
+            "display_name": "Ada",
             "event_version": 1,
             "is_correct": True,
             "participant_id": str(PARTICIPANT_ID),
