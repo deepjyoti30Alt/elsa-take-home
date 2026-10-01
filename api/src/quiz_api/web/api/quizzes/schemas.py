@@ -48,3 +48,22 @@ class QuizSnapshotResponse(BaseModel):
     current_round: RoundSnapshotResponse | None
     id: UUID
     status: QuizStatus
+
+
+class LeaderboardEntryResponse(BaseModel):
+    """One participant's deterministic place in the quiz leaderboard."""
+
+    display_name: str
+    participant_id: UUID
+    rank: int
+    total_response_ms: int
+    total_score: int
+
+
+class LeaderboardPageResponse(BaseModel):
+    """Paginated quiz leaderboard response."""
+
+    entries: tuple[LeaderboardEntryResponse, ...]
+    limit: int
+    offset: int
+    total: int

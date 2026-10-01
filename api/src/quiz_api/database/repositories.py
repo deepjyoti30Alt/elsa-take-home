@@ -5,7 +5,7 @@ from datetime import datetime
 from typing import Any, cast
 from uuid import UUID, uuid4
 
-from sqlalchemy import Select, desc, select, update
+from sqlalchemy import Select, desc, func, select, update
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.sql.expression import UnaryExpression
@@ -160,6 +160,13 @@ class ParticipantRepository:
         )
         result = await self._session.execute(statement)
         return result.scalars().all()
+
+    async def count_participants(self, quiz_id: UUID) -> int:
+        """Return the total number of participants in one quiz."""
+        statement = (
+            select(func.count()).select_from(Participant).where(Participant.quiz_id == quiz_id)
+        )
+        return (await self._session.execute(statement)).scalar_one()
 
     def add_participant(self, participant: Participant) -> None:
         """Stage a participant; the caller's transaction controls persistence."""

@@ -7,9 +7,12 @@ from httpx import ASGITransport, AsyncClient
 from quiz_api.application import get_app
 from quiz_api.database.models import Participant, QuizStatus, RoundStatus
 from quiz_api.security.tokens import TokenService
+from quiz_api.services.leaderboard import RankedStanding
+from quiz_api.services.leaderboard_reads import LeaderboardPage
 from quiz_api.services.participation import JoinResult
 from quiz_api.services.snapshots import QuestionSnapshot, QuizSnapshot, RoundSnapshot
 from quiz_api.web.api.quizzes.dependencies import (
+    get_leaderboard_read_service,
     get_participation_service,
     get_quiz_snapshot_service,
     get_token_service,
@@ -58,6 +61,27 @@ class FakeQuizSnapshotService:
         )
 
 
+class FakeLeaderboardReadService:
+    """Return a globally ranked page without requiring a database in route tests."""
+
+    async def get_page(self, **_: object) -> LeaderboardPage:
+        """Return a deterministic leaderboard page for the API contract test."""
+        return LeaderboardPage(
+            entries=(
+                RankedStanding(
+                    display_name="Ada",
+                    participant_id=PARTICIPANT_ID,
+                    rank=3,
+                    total_response_ms=1200,
+                    total_score=175,
+                ),
+            ),
+            limit=50,
+            offset=2,
+            total=8,
+        )
+
+
 def build_test_token_service() -> TokenService:
     """Create real signed tokens to verify the public response shape."""
     return TokenService(build_test_settings())
@@ -102,3 +126,29 @@ async def test_quiz_snapshot_exposes_question_presentation_without_answer_key() 
         "prompt": "Which word means to make something less severe?",
     }
     assert "correct_answer" not in response.text
+
+
+async def test_leaderboard_returns_paginated_deterministic_entries() -> None:
+    """The endpoint returns global ranks alongside page and total metadata."""
+    app = get_app(build_test_settings())
+    app.dependency_overrides[get_leaderboard_read_service] = FakeLeaderboardReadService
+    transport = ASGITransport(app=app)
+
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        response = await client.get(f"/v1/quizzes/{QUIZ_ID}/leaderboard?limit=50&offset=2")
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "entries": [
+            {
+                "display_name": "Ada",
+                "participant_id": str(PARTICIPANT_ID),
+                "rank": 3,
+                "total_response_ms": 1200,
+                "total_score": 175,
+            },
+        ],
+        "limit": 50,
+        "offset": 2,
+        "total": 8,
+    }

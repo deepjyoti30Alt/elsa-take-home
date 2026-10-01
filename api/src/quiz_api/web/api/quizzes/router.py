@@ -3,9 +3,10 @@
 from urllib.parse import urlencode
 from uuid import UUID, uuid4
 
-from fastapi import APIRouter, Header, status
+from fastapi import APIRouter, Header, Query, status
 
 from quiz_api.web.api.quizzes.dependencies import (
+    LeaderboardReadServiceDependency,
     ParticipationServiceDependency,
     QuizSnapshotServiceDependency,
     TokenServiceDependency,
@@ -13,12 +14,40 @@ from quiz_api.web.api.quizzes.dependencies import (
 from quiz_api.web.api.quizzes.schemas import (
     JoinParticipantRequest,
     JoinParticipantResponse,
+    LeaderboardEntryResponse,
+    LeaderboardPageResponse,
     QuestionSnapshotResponse,
     QuizSnapshotResponse,
     RoundSnapshotResponse,
 )
 
 router = APIRouter(prefix="/quizzes", tags=["participants"])
+
+
+@router.get("/{quiz_id}/leaderboard", response_model=LeaderboardPageResponse, tags=["leaderboard"])
+async def get_leaderboard(
+    quiz_id: UUID,
+    leaderboard_service: LeaderboardReadServiceDependency,
+    limit: int = Query(default=50, ge=1, le=100),
+    offset: int = Query(default=0, ge=0),
+) -> LeaderboardPageResponse:
+    """Return a paginated leaderboard using the documented tie-break ordering."""
+    page = await leaderboard_service.get_page(limit=limit, offset=offset, quiz_id=quiz_id)
+    return LeaderboardPageResponse(
+        entries=tuple(
+            LeaderboardEntryResponse(
+                display_name=entry.display_name,
+                participant_id=entry.participant_id,
+                rank=entry.rank,
+                total_response_ms=entry.total_response_ms,
+                total_score=entry.total_score,
+            )
+            for entry in page.entries
+        ),
+        limit=page.limit,
+        offset=page.offset,
+        total=page.total,
+    )
 
 
 @router.get("/{quiz_id}", response_model=QuizSnapshotResponse, tags=["quizzes"])
