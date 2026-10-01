@@ -80,7 +80,7 @@ class Quiz(Base):
 
     id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True, default=uuid4)
     status: Mapped[QuizStatus] = mapped_column(
-        Enum(QuizStatus, name="quiz_status", native_enum=False),
+        Enum(QuizStatus, name="quiz_status", native_enum=False, create_constraint=True),
         nullable=False,
         default=QuizStatus.DRAFT,
     )
@@ -130,7 +130,7 @@ class Round(Base):
         nullable=False,
     )
     status: Mapped[RoundStatus] = mapped_column(
-        Enum(RoundStatus, name="round_status", native_enum=False),
+        Enum(RoundStatus, name="round_status", native_enum=False, create_constraint=True),
         nullable=False,
         default=RoundStatus.PENDING,
     )
@@ -226,7 +226,7 @@ class ScoreLedgerEntry(Base):
     )
     points: Mapped[int] = mapped_column(Integer, nullable=False)
     reason: Mapped[ScoreReason] = mapped_column(
-        Enum(ScoreReason, name="score_reason", native_enum=False),
+        Enum(ScoreReason, name="score_reason", native_enum=False, create_constraint=True),
         nullable=False,
     )
     created_at: Mapped[datetime] = mapped_column(
@@ -253,7 +253,7 @@ class OutboxEvent(Base):
     )
     seq: Mapped[int] = mapped_column(BigInteger, nullable=False)
     type: Mapped[OutboxEventType] = mapped_column(
-        Enum(OutboxEventType, name="outbox_event_type", native_enum=False),
+        Enum(OutboxEventType, name="outbox_event_type", native_enum=False, create_constraint=True),
         nullable=False,
     )
     payload: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False)
