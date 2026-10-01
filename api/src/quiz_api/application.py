@@ -32,6 +32,18 @@ def get_app(settings: Settings | None = None) -> FastAPI:
         """Create process resources and dispose of them on shutdown."""
         resources = create_application_resources(application_settings)
         app.state.resources = resources
+        resources.workers.start(
+            lambda: resources.outbox_relay.run_forever(
+                batch_size=application_settings.outbox_relay_batch_size,
+                poll_interval_seconds=application_settings.outbox_relay_poll_ms / 1000,
+                retry_max_seconds=float(application_settings.outbox_relay_retry_max_seconds),
+            ),
+        )
+        resources.workers.start(
+            lambda: resources.leaderboard_ticker.run_forever(
+                interval_seconds=application_settings.leaderboard_tick_ms / 1000,
+            ),
+        )
         try:
             yield
         finally:

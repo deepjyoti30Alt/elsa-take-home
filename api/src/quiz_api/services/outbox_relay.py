@@ -17,6 +17,7 @@ from quiz_api.events import (
     outbox_event_to_envelope,
     quiz_channel,
 )
+from quiz_api.services.leaderboard_ticker import LeaderboardChangeTracker
 
 LEADERBOARD_SCORE_SCALE = 1_000_000_000
 
@@ -118,10 +119,12 @@ class OutboxRelay:
     def __init__(
         self,
         session_factory: async_sessionmaker[AsyncSession],
+        change_tracker: LeaderboardChangeTracker,
         projection: RedisLeaderboardProjection,
         publisher: RedisQuizEventPublisher,
     ) -> None:
         """Bind the relay to one database-session factory and Redis delivery adapters."""
+        self._change_tracker = change_tracker
         self._projection = projection
         self._publisher = publisher
         self._session_factory = session_factory
@@ -161,6 +164,7 @@ class OutboxRelay:
         if event_type is OutboxEventType.ANSWER_ACCEPTED:
             payload = cast(AnswerAcceptedEventPayload, event.payload)
             await self._projection.apply_answer(quiz_id=event.quiz_id, payload=payload)
+            await self._change_tracker.mark_changed(event.quiz_id, event.seq)
             return
         await self._publisher.publish(event)
 
