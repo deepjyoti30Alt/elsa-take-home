@@ -2,8 +2,8 @@
 
 This directory contains the FastAPI component for a host-paced, live
 vocabulary quiz. PostgreSQL is the durable source of truth for quiz state,
-answers, scores, and the transactional outbox. Redis is provisioned for the
-real-time projection and delivery work that follows this REST foundation.
+answers, scores, and the transactional outbox. Redis holds a rebuildable
+leaderboard projection and distributes round and coalesced leaderboard events.
 
 The current API supports joining a quiz, reading its public state and
 leaderboard, submitting an answer, and host-controlled round transitions.
@@ -127,6 +127,33 @@ Inspect the current standings with:
 curl "http://127.0.0.1:8000/v1/quizzes/${QUIZ_ID}/leaderboard?limit=50&offset=0"
 ```
 
+## Projection and delivery workers
+
+The API starts an outbox relay and leaderboard ticker with its lifespan. The
+command handlers never write Redis directly. After an answer transaction
+commits, the relay writes the participant's absolute totals to the quiz Redis
+sorted set and sidecar hashes. Repeating that write after a worker failure is
+safe because it overwrites totals rather than incrementing them.
+
+The relay publishes `round.opened` and `round.closed` to the quiz Redis
+channel. The ticker coalesces accepted answers per quiz and publishes no more
+than one `leaderboard.updated` event during each configured 250–500 ms tick.
+All delivery events have a schema version and the durable per-quiz sequence of
+the state change that produced them.
+
+If Redis is unavailable, incomplete, or malformed, the REST leaderboard
+transparently reads the same deterministic page from PostgreSQL. Redis can be
+reconstructed at any time from participant totals:
+
+```bash
+uv run python -m quiz_api.rebuild_projection "${QUIZ_ID}"
+```
+
+The outbox relay leaves a failed event unpublished and retries with bounded
+exponential backoff. For a production multi-instance deployment, run relay and
+ticker workers under one elected-worker or distributed-lock arrangement so
+each outbox row is projected once at a time; duplicate delivery remains safe.
+
 ## Security and delivery behavior
 
 - Participant tokens are signed JWTs scoped to one quiz and cannot authorize
@@ -146,16 +173,19 @@ curl "http://127.0.0.1:8000/v1/quizzes/${QUIZ_ID}/leaderboard?limit=50&offset=0"
 | Variable | Purpose |
 | --- | --- |
 | `QUIZ_API_DATABASE_URL` | Neon/PostgreSQL async SQLAlchemy URL. |
-| `QUIZ_API_REDIS_URL` | Redis endpoint for future projections and pub/sub. |
+| `QUIZ_API_REDIS_URL` | Redis endpoint for leaderboard projection and pub/sub. |
 | `QUIZ_API_JWT_SIGNING_KEY` | Secret used for participant and stream tokens. |
 | `QUIZ_API_HOST_DEMO_TOKEN` | Secret required by host-only round controls. |
 | `QUIZ_API_PARTICIPANT_TOKEN_TTL_SECONDS` | Participant-token lifetime. |
 | `QUIZ_API_STREAM_TOKEN_TTL_SECONDS` | Short-lived stream-token lifetime. |
 | `QUIZ_API_JOIN_RATE_LIMIT_PER_MINUTE` | Per-address participant-join allowance. |
 | `QUIZ_API_ANSWER_RATE_LIMIT_PER_MINUTE` | Per participant/address answer allowance. |
-| `QUIZ_API_LEADERBOARD_TICK_MS` | Planned coalescing interval for leaderboard broadcasts. |
-| `QUIZ_API_FULL_LEADERBOARD_LIMIT` | Planned participant threshold for full stream payloads. |
-| `QUIZ_API_COMPACT_LEADERBOARD_LIMIT` | Planned top-entry count for large stream payloads. |
+| `QUIZ_API_OUTBOX_RELAY_BATCH_SIZE` | Maximum unpublished events handled in one relay transaction. |
+| `QUIZ_API_OUTBOX_RELAY_POLL_MS` | Idle delay before polling for unpublished events. |
+| `QUIZ_API_OUTBOX_RELAY_RETRY_MAX_SECONDS` | Maximum relay backoff after a failed projection/delivery. |
+| `QUIZ_API_LEADERBOARD_TICK_MS` | Coalescing interval for leaderboard broadcasts. |
+| `QUIZ_API_FULL_LEADERBOARD_LIMIT` | Participant threshold for full leaderboard event payloads. |
+| `QUIZ_API_COMPACT_LEADERBOARD_LIMIT` | Top-entry count in large leaderboard event payloads. |
 
 Never commit `.env`, Neon credentials, signing keys, participant tokens, or
 host tokens.
