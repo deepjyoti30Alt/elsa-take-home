@@ -6,15 +6,21 @@ from datetime import UTC, datetime
 from typing import Any
 from uuid import UUID
 
+from fastapi import FastAPI
+from starlette.requests import Request
+
+from quiz_api.application import get_app
 from quiz_api.database.models import QuizStatus
 from quiz_api.events import (
     LeaderboardUpdatedEventPayload,
     QuizEventEnvelope,
     quiz_snapshot_event_payload,
 )
+from quiz_api.security.tokens import TokenClaims
 from quiz_api.services.event_streams import QuizEventBroker
 from quiz_api.services.snapshots import QuizSnapshot
-from quiz_api.web.api.quizzes.router import stream_messages
+from quiz_api.web.api.quizzes.router import stream_messages, stream_quiz_events
+from tests.test_application import build_test_settings
 
 QUIZ_ID = UUID("10000000-0000-0000-0000-000000000001")
 
@@ -72,6 +78,26 @@ class FakeSubscription:
         self.closed = True
 
 
+class FakeBroker:
+    """Return a prebuilt subscription without opening a Redis connection."""
+
+    def __init__(self, subscription: FakeSubscription) -> None:
+        """Store the subscription returned to the endpoint."""
+        self._subscription = subscription
+
+    async def connect(self, _: UUID) -> FakeSubscription:
+        """Return the deterministic stream subscription."""
+        return self._subscription
+
+
+class FakeSnapshotService:
+    """Return a deterministic state snapshot without requiring PostgreSQL."""
+
+    async def get_snapshot(self, _: UUID) -> QuizSnapshot:
+        """Return the active quiz snapshot used in SSE response testing."""
+        return QuizSnapshot(current_round=None, event_seq=4, id=QUIZ_ID, status=QuizStatus.ACTIVE)
+
+
 def leaderboard_event(sequence: int) -> QuizEventEnvelope:
     """Build a valid event delivered by the Redis broker test."""
     return QuizEventEnvelope(
@@ -121,3 +147,39 @@ async def test_broker_starts_and_stops_one_redis_listener_for_a_quiz() -> None:
     assert redis.connection.subscribed == (f"quiz:{QUIZ_ID}:events",)
     assert redis.connection.unsubscribed == (f"quiz:{QUIZ_ID}:events",)
     assert redis.connection.closed
+
+
+async def test_event_endpoint_configures_heartbeats_and_sends_snapshot_first() -> None:
+    """The native EventSource response has a bounded heartbeat and initial state event."""
+    app = get_app(build_test_settings())
+    subscription = FakeSubscription()
+    response = await stream_quiz_events(
+        QUIZ_ID,
+        stream_request(app),
+        TokenClaims(participant_id=QUIZ_ID, purpose="stream", quiz_id=QUIZ_ID),
+        FakeBroker(subscription),  # type: ignore[arg-type]
+        FakeSnapshotService(),  # type: ignore[arg-type]
+    )
+    messages = response.body_iterator
+    first = await anext(messages)
+    await messages.aclose()
+
+    assert response._ping_interval == 15
+    assert b"event: quiz.snapshot" in first.encode()
+    assert subscription.closed
+
+
+def stream_request(app: FastAPI) -> Request:
+    """Build the minimal request scope needed by the direct SSE endpoint test."""
+    return Request(
+        {
+            "app": app,
+            "headers": [],
+            "method": "GET",
+            "path": f"/v1/quizzes/{QUIZ_ID}/events",
+            "query_string": b"",
+            "scheme": "http",
+            "server": ("testserver", 80),
+            "type": "http",
+        }
+    )
