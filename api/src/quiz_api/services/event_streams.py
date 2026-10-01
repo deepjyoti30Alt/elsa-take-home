@@ -51,7 +51,7 @@ class StreamSubscription:
     _broker: QuizEventBroker
     _closed: bool
     _quiz_id: UUID
-    queue: asyncio.Queue[QuizEventEnvelope]
+    queue: asyncio.Queue[QuizEventEnvelope | None]
 
     async def close(self) -> None:
         """Remove the listener and stop its Redis subscription when it was the last one."""
@@ -65,7 +65,7 @@ class QuizEventBroker:
 
     def __init__(self, redis: RedisPubSubFactory, *, queue_size: int) -> None:
         """Use one Redis client factory and bounded per-listener queues."""
-        self._listeners: dict[UUID, set[asyncio.Queue[QuizEventEnvelope]]] = {}
+        self._listeners: dict[UUID, set[asyncio.Queue[QuizEventEnvelope | None]]] = {}
         self._listener_tasks: dict[UUID, asyncio.Task[None]] = {}
         self._lock = asyncio.Lock()
         self._queue_size = queue_size
@@ -73,7 +73,7 @@ class QuizEventBroker:
 
     async def connect(self, quiz_id: UUID) -> StreamSubscription:
         """Register a local listener and begin Redis subscription on the first connection."""
-        queue: asyncio.Queue[QuizEventEnvelope] = asyncio.Queue(maxsize=self._queue_size)
+        queue: asyncio.Queue[QuizEventEnvelope | None] = asyncio.Queue(maxsize=self._queue_size)
         async with self._lock:
             listeners = self._listeners.setdefault(quiz_id, set())
             listeners.add(queue)
@@ -82,7 +82,11 @@ class QuizEventBroker:
                 self._listener_tasks[quiz_id] = asyncio.create_task(self._listen(quiz_id))
         return StreamSubscription(self, False, quiz_id, queue)
 
-    async def disconnect(self, quiz_id: UUID, queue: asyncio.Queue[QuizEventEnvelope]) -> None:
+    async def disconnect(
+        self,
+        quiz_id: UUID,
+        queue: asyncio.Queue[QuizEventEnvelope | None],
+    ) -> None:
         """Remove a local listener and cancel its Redis task when no listeners remain."""
         task: asyncio.Task[None] | None = None
         async with self._lock:
@@ -102,6 +106,7 @@ class QuizEventBroker:
         """Stop all listener tasks before the lifecycle-owned Redis client closes."""
         async with self._lock:
             tasks = tuple(self._listener_tasks.values())
+            queues = tuple(queue for listeners in self._listeners.values() for queue in listeners)
             self._listener_tasks = {}
             self._listeners = {}
             ACTIVE_STREAMS.set(0)
@@ -109,6 +114,10 @@ class QuizEventBroker:
             task.cancel()
         if tasks:
             await asyncio.gather(*tasks, return_exceptions=True)
+        for queue in queues:
+            if queue.full():
+                queue.get_nowait()
+            queue.put_nowait(None)
 
     async def _listen(self, quiz_id: UUID) -> None:
         """Read one quiz channel and reconnect while local listeners still exist."""

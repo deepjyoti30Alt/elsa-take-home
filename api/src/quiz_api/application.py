@@ -2,9 +2,9 @@
 
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
-from typing import Literal
+from typing import Literal, cast
 
-from fastapi import FastAPI, Response
+from fastapi import FastAPI, Response, status
 from prometheus_client import CONTENT_TYPE_LATEST
 from pydantic import BaseModel
 
@@ -13,15 +13,25 @@ from quiz_api.logging import configure_logging
 from quiz_api.observability import metrics_payload
 from quiz_api.settings import Settings, get_settings
 from quiz_api.web.api.router import API_PREFIX, api_router
+from quiz_api.web.dependencies import ResourcesDependency
 from quiz_api.web.errors import register_exception_handlers
 from quiz_api.web.middleware.request_context import RequestContextMiddleware
 from quiz_api.web.rate_limit import FixedWindowRateLimiter
+from quiz_api.web.readiness import ReadinessResources, check_readiness
 
 
 class HealthResponse(BaseModel):
     """Response returned when the process is alive."""
 
     status: Literal["ok"] = "ok"
+
+
+class ReadinessResponse(BaseModel):
+    """Dependency-specific readiness state used by load balancers and operators."""
+
+    database: Literal["ok", "unavailable"]
+    redis: Literal["ok", "unavailable"]
+    status: Literal["ok", "unavailable"]
 
 
 def get_app(settings: Settings | None = None) -> FastAPI:
@@ -79,5 +89,20 @@ def get_app(settings: Settings | None = None) -> FastAPI:
     async def get_metrics() -> Response:
         """Expose Prometheus metrics without adding it to the public quiz API contract."""
         return Response(content=metrics_payload(), media_type=CONTENT_TYPE_LATEST)
+
+    @app.get("/ready", response_model=ReadinessResponse, tags=["operations"])
+    async def get_readiness(resources: ResourcesDependency) -> Response:
+        """Report readiness while distinguishing the database from Redis availability."""
+        result = await check_readiness(cast(ReadinessResources, resources))
+        response = ReadinessResponse(
+            database="ok" if result.database_ready else "unavailable",
+            redis="ok" if result.redis_ready else "unavailable",
+            status="ok" if result.ready else "unavailable",
+        )
+        return Response(
+            content=response.model_dump_json(),
+            media_type="application/json",
+            status_code=status.HTTP_200_OK if result.ready else status.HTTP_503_SERVICE_UNAVAILABLE,
+        )
 
     return app

@@ -85,6 +85,8 @@ async def stream_messages(
         )
         while True:
             event = await subscription.queue.get()
+            if event is None:
+                return
             if event.seq <= snapshot_payload.seq:
                 continue
             yield stream_event(event)

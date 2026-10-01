@@ -149,6 +149,15 @@ async def test_broker_starts_and_stops_one_redis_listener_for_a_quiz() -> None:
     assert redis.connection.closed
 
 
+async def test_broker_shutdown_wakes_an_active_stream_for_clean_generator_exit() -> None:
+    """Application shutdown unblocks a waiting SSE generator before Redis is closed."""
+    broker = QuizEventBroker(FakeRedis(), queue_size=10)  # type: ignore[arg-type]
+    subscription = await broker.connect(QUIZ_ID)
+    await broker.close()
+
+    assert await subscription.queue.get() is None
+
+
 async def test_event_endpoint_configures_heartbeats_and_sends_snapshot_first() -> None:
     """The native EventSource response has a bounded heartbeat and initial state event."""
     app = get_app(build_test_settings())
