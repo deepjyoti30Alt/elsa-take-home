@@ -3,9 +3,9 @@
 from collections.abc import Sequence
 from datetime import datetime
 from typing import Any, cast
-from uuid import UUID
+from uuid import UUID, uuid4
 
-from sqlalchemy import Select, desc, select
+from sqlalchemy import Select, desc, select, update
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.sql.expression import UnaryExpression
@@ -153,6 +153,27 @@ class ParticipantRepository:
         """Stage a participant; the caller's transaction controls persistence."""
         self._session.add(participant)
 
+    async def apply_score(
+        self,
+        *,
+        participant_id: UUID,
+        points: int,
+        response_ms: int,
+    ) -> tuple[int, int]:
+        """Atomically add score totals and return their authoritative values."""
+        statement = (
+            update(Participant)
+            .where(Participant.id == participant_id)
+            .values(
+                total_response_ms=Participant.total_response_ms + response_ms,
+                total_score=Participant.total_score + points,
+            )
+            .returning(Participant.total_score, Participant.total_response_ms)
+        )
+        result = await self._session.execute(statement)
+        total_score, total_response_ms = result.one()
+        return total_score, total_response_ms
+
 
 class AnswerRepository:
     """Load and stage the single allowed answer for each participant-round pair."""
@@ -178,6 +199,40 @@ class AnswerRepository:
         """Stage an answer; the caller's transaction controls persistence."""
         self._session.add(submission)
 
+    async def create_submission_if_absent(
+        self,
+        *,
+        answer: str,
+        awarded_points: int,
+        is_correct: bool,
+        participant_id: UUID,
+        response_ms: int,
+        round_id: UUID,
+        submitted_at: datetime,
+    ) -> AnswerSubmission | None:
+        """Insert the one allowed answer or report a concurrent prior answer."""
+        statement = (
+            insert(AnswerSubmission)
+            .values(
+                answer=answer,
+                awarded_points=awarded_points,
+                id=uuid4(),
+                is_correct=is_correct,
+                participant_id=participant_id,
+                response_ms=response_ms,
+                round_id=round_id,
+                submitted_at=submitted_at,
+            )
+            .on_conflict_do_nothing(
+                index_elements=[AnswerSubmission.participant_id, AnswerSubmission.round_id]
+            )
+            .returning(AnswerSubmission.id)
+        )
+        submission_id = (await self._session.execute(statement)).scalar_one_or_none()
+        if submission_id is None:
+            return None
+        return await self._session.get(AnswerSubmission, submission_id)
+
 
 class OutboxRepository:
     """Read and update durable events used to build cache projections."""
@@ -201,6 +256,16 @@ class OutboxRepository:
     def add_event(self, event: OutboxEvent) -> None:
         """Stage an outbox event; the caller's transaction controls persistence."""
         self._session.add(event)
+
+    async def allocate_sequence(self, quiz_id: UUID) -> int:
+        """Atomically allocate the next monotonically increasing quiz event sequence."""
+        statement = (
+            update(Quiz)
+            .where(Quiz.id == quiz_id)
+            .values(next_event_seq=Quiz.next_event_seq + 1)
+            .returning(Quiz.next_event_seq)
+        )
+        return (await self._session.execute(statement)).scalar_one()
 
     def mark_published(self, event: OutboxEvent, published_at: datetime) -> None:
         """Record successful event delivery after projection work completes."""

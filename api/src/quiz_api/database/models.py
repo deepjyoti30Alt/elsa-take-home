@@ -85,6 +85,7 @@ class Quiz(Base):
         default=QuizStatus.DRAFT,
     )
     host_id: Mapped[str] = mapped_column(String(255), nullable=False)
+    next_event_seq: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0)
     current_round_id: Mapped[UUID | None] = mapped_column(
         Uuid(as_uuid=True),
         ForeignKey("round.id", ondelete="SET NULL"),
