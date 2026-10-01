@@ -1,6 +1,9 @@
 """Tests for coalesced leaderboard event publication."""
 
+import asyncio
 from uuid import UUID
+
+import pytest
 
 from quiz_api.events import LeaderboardUpdatedEventPayload, QuizEventEnvelope
 from quiz_api.services.leaderboard import RankedStanding
@@ -25,6 +28,23 @@ class FakePublisher:
     async def publish(self, event: QuizEventEnvelope) -> None:
         """Collect one ticker event."""
         self.events.append(event)
+
+
+class FailingPublisher(FakePublisher):
+    """Fail a configured number of deliveries before accepting events."""
+
+    def __init__(self, *, failures: int) -> None:
+        """Initialize the remaining failure count."""
+        super().__init__()
+        self._failures = failures
+
+    async def publish(self, event: QuizEventEnvelope) -> None:
+        """Fail before delivery until the configured transient outage clears."""
+        if self._failures > 0:
+            self._failures -= 1
+            message = "Redis is unavailable"
+            raise ConnectionError(message)
+        await super().publish(event)
 
 
 class FakePageReader:
@@ -94,6 +114,29 @@ async def test_ticker_payload_uses_compact_page_above_the_configured_threshold()
 
     assert reader.calls == [500, 50]
     assert leaderboard_updated_payload(selected_page).total_participants == 501
+
+
+async def test_concurrent_change_marks_keep_the_highest_durable_sequence() -> None:
+    """Concurrent answer relays cannot regress the sequence used for one quiz update."""
+    tracker = LeaderboardChangeTracker()
+
+    await asyncio.gather(*(tracker.mark_changed(QUIZ_ID, sequence) for sequence in range(1, 101)))
+
+    assert await tracker.drain() == {QUIZ_ID: 100}
+
+
+async def test_failed_ticker_delivery_is_requeued_for_recovery() -> None:
+    """A transient publish failure preserves the changed quiz for the next ticker run."""
+    tracker = LeaderboardChangeTracker()
+    publisher = FailingPublisher(failures=1)
+    ticker = LeaderboardTicker(tracker, fake_payload_factory, publisher)
+    await tracker.mark_changed(QUIZ_ID, 9)
+
+    with pytest.raises(ConnectionError):
+        await ticker.tick_once()
+
+    assert await ticker.tick_once() == 1
+    assert publisher.events[0].seq == 9
 
 
 def leaderboard_page(*, total: int) -> LeaderboardPage:
