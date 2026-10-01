@@ -5,6 +5,10 @@ from typing import Literal
 from fastapi import FastAPI
 from pydantic import BaseModel
 
+from quiz_api.logging import configure_logging
+from quiz_api.settings import Settings, get_settings
+from quiz_api.web.middleware.request_context import RequestContextMiddleware
+
 
 class HealthResponse(BaseModel):
     """Response returned when the process is alive."""
@@ -12,8 +16,11 @@ class HealthResponse(BaseModel):
     status: Literal["ok"] = "ok"
 
 
-def get_app() -> FastAPI:
+def get_app(settings: Settings | None = None) -> FastAPI:
     """Create and configure the quiz API application."""
+    application_settings = settings or get_settings()
+    configure_logging(application_settings.log_level)
+
     app = FastAPI(
         title="Real-Time Vocabulary Quiz API",
         version="0.1.0",
@@ -21,6 +28,7 @@ def get_app() -> FastAPI:
         redoc_url="/redoc",
         openapi_url="/openapi.json",
     )
+    app.add_middleware(RequestContextMiddleware)
 
     @app.get("/health", response_model=HealthResponse, tags=["operations"])
     async def get_health() -> HealthResponse:
