@@ -10,6 +10,7 @@ from pydantic import BaseModel
 from quiz_api.infrastructure.resources import create_application_resources
 from quiz_api.logging import configure_logging
 from quiz_api.settings import Settings, get_settings
+from quiz_api.web.errors import register_exception_handlers
 from quiz_api.web.middleware.request_context import RequestContextMiddleware
 
 
@@ -43,6 +44,7 @@ def get_app(settings: Settings | None = None) -> FastAPI:
         lifespan=lifespan,
     )
     app.add_middleware(RequestContextMiddleware)
+    register_exception_handlers(app)
 
     @app.get("/health", response_model=HealthResponse, tags=["operations"])
     async def get_health() -> HealthResponse:

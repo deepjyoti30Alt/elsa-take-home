@@ -21,6 +21,7 @@ class RequestContextMiddleware(BaseHTTPMiddleware):
         """Log request completion without exposing query strings or secrets."""
         request_id = get_request_id(request.headers.get("X-Request-ID"))
         started_at = perf_counter()
+        request.state.request_id = request_id
         structlog.contextvars.bind_contextvars(request_id=request_id)
         logger.info("request_started", method=request.method, path=request.url.path)
 
