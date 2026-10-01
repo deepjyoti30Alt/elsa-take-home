@@ -48,6 +48,9 @@ class Settings(DatabaseSettings):
     compact_leaderboard_limit: int = Field(default=50, gt=0)
     join_rate_limit_per_minute: int = Field(default=10, gt=0, le=100)
     answer_rate_limit_per_minute: int = Field(default=30, gt=0, le=300)
+    outbox_relay_batch_size: int = Field(default=100, gt=0, le=1000)
+    outbox_relay_poll_ms: int = Field(default=250, ge=100, le=10_000)
+    outbox_relay_retry_max_seconds: int = Field(default=30, ge=1, le=300)
 
     @field_validator("redis_url")
     @classmethod

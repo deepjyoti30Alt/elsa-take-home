@@ -1,6 +1,8 @@
 """Durable outbox relay for Redis leaderboard projection and quiz events."""
 
-from collections.abc import Awaitable, Mapping
+import asyncio
+from collections.abc import Awaitable, Iterable, Mapping
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Protocol, cast
 from uuid import UUID
@@ -19,6 +21,16 @@ from quiz_api.events import (
 LEADERBOARD_SCORE_SCALE = 1_000_000_000
 
 
+@dataclass(frozen=True, slots=True)
+class ProjectedParticipant:
+    """Durable participant totals required to rebuild one leaderboard cache key."""
+
+    display_name: str
+    participant_id: UUID
+    total_response_ms: int
+    total_score: int
+
+
 class RedisEventTransport(Protocol):
     """Subset of Redis commands required by the projection and publisher."""
 
@@ -30,6 +42,9 @@ class RedisEventTransport(Protocol):
         mapping: Mapping[str, str] | None = None,
     ) -> Awaitable[int]:
         """Set one or more values in a Redis hash."""
+
+    def delete(self, *names: str) -> Awaitable[int]:
+        """Delete one or more Redis keys."""
 
     def publish(self, channel: str, message: str) -> Awaitable[int]:
         """Publish a serialized event to a Redis pub/sub channel."""
@@ -61,6 +76,28 @@ class RedisLeaderboardProjection:
             leaderboard_names_key(quiz_id),
             mapping={participant_id: payload.display_name},
         )
+
+    async def replace_quiz(
+        self,
+        *,
+        quiz_id: UUID,
+        participants: Iterable[ProjectedParticipant],
+    ) -> int:
+        """Replace a quiz projection from durable totals after cache loss or repair."""
+        score_mapping: dict[str, float] = {}
+        name_mapping: dict[str, str] = {}
+        for participant in participants:
+            participant_id = str(participant.participant_id)
+            name_mapping[participant_id] = participant.display_name
+            score_mapping[participant_id] = leaderboard_sort_score(
+                participant.total_score,
+                participant.total_response_ms,
+            )
+        await self._redis.delete(leaderboard_key(quiz_id), leaderboard_names_key(quiz_id))
+        if score_mapping:
+            await self._redis.zadd(leaderboard_key(quiz_id), score_mapping)
+            await self._redis.hset(leaderboard_names_key(quiz_id), mapping=name_mapping)
+        return len(score_mapping)
 
 
 class RedisQuizEventPublisher:
@@ -100,6 +137,25 @@ class OutboxRelay:
                 repository.mark_published(event, datetime.now(UTC))
             return len(events)
 
+    async def run_forever(
+        self,
+        *,
+        batch_size: int,
+        poll_interval_seconds: float,
+        retry_max_seconds: float,
+    ) -> None:
+        """Continuously relay committed events with bounded backoff after any failure."""
+        failures = 0
+        while True:
+            try:
+                delivered = await self.relay_once(batch_size=batch_size)
+                failures = 0
+                if delivered == 0:
+                    await asyncio.sleep(poll_interval_seconds)
+            except Exception:
+                failures += 1
+                await asyncio.sleep(retry_delay_seconds(failures, retry_max_seconds))
+
     async def _deliver(self, event_type: OutboxEventType, event: QuizEventEnvelope) -> None:
         """Apply a projection or publish a state transition according to event type."""
         if event_type is OutboxEventType.ANSWER_ACCEPTED:
@@ -122,3 +178,8 @@ def leaderboard_names_key(quiz_id: UUID) -> str:
 def leaderboard_sort_score(total_score: int, total_response_ms: int) -> float:
     """Encode score-descending and response-time-ascending order for Redis ZRANGE."""
     return float((-total_score * LEADERBOARD_SCORE_SCALE) + total_response_ms)
+
+
+def retry_delay_seconds(failures: int, maximum_seconds: float) -> float:
+    """Return bounded exponential retry delay for consecutive relay failures."""
+    return min(float(2 ** max(failures - 1, 0)), maximum_seconds)

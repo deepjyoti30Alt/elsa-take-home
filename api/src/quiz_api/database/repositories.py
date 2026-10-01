@@ -168,6 +168,14 @@ class ParticipantRepository:
         )
         return (await self._session.execute(statement)).scalar_one()
 
+    async def list_all_for_projection(self, quiz_id: UUID) -> Sequence[Participant]:
+        """Return all participants needed to rebuild one Redis leaderboard projection."""
+        statement: Select[Participant] = (
+            select(Participant).where(Participant.quiz_id == quiz_id).order_by(Participant.id)
+        )
+        result = await self._session.execute(statement)
+        return result.scalars().all()
+
     def add_participant(self, participant: Participant) -> None:
         """Stage a participant; the caller's transaction controls persistence."""
         self._session.add(participant)

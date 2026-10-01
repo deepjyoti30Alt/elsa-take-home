@@ -6,11 +6,13 @@ from uuid import UUID
 from quiz_api.database.models import OutboxEvent, OutboxEventType
 from quiz_api.events import AnswerAcceptedEventPayload, outbox_event_to_envelope
 from quiz_api.services.outbox_relay import (
+    ProjectedParticipant,
     RedisLeaderboardProjection,
     RedisQuizEventPublisher,
     leaderboard_key,
     leaderboard_names_key,
     leaderboard_sort_score,
+    retry_delay_seconds,
 )
 
 QUIZ_ID = UUID("10000000-0000-0000-0000-000000000001")
@@ -32,6 +34,11 @@ class FakeRedis:
         assert isinstance(mapping, dict)
         self.hashes.append((name, mapping))
         return 1
+
+    async def delete(self, *names: str) -> int:
+        """Record replacement of all projection keys for one quiz."""
+        self.deleted = names
+        return len(names)
 
     async def publish(self, channel: str, message: str) -> int:
         """Record a pub/sub message."""
@@ -90,3 +97,32 @@ async def test_publisher_serializes_the_versioned_envelope_to_the_quiz_channel()
 
     assert redis.published[0][0] == f"quiz:{QUIZ_ID}:events"
     assert '"type":"answer.accepted"' in redis.published[0][1]
+
+
+async def test_projection_rebuild_replaces_existing_keys_with_durable_totals() -> None:
+    """A cache rebuild removes stale keys before projecting every durable participant."""
+    redis = FakeRedis()
+    projection = RedisLeaderboardProjection(redis)
+
+    rebuilt_count = await projection.replace_quiz(
+        quiz_id=QUIZ_ID,
+        participants=(
+            ProjectedParticipant(
+                display_name="Ada",
+                participant_id=PARTICIPANT_ID,
+                total_response_ms=300,
+                total_score=195,
+            ),
+        ),
+    )
+
+    assert rebuilt_count == 1
+    assert redis.deleted == (leaderboard_key(QUIZ_ID), leaderboard_names_key(QUIZ_ID))
+    assert redis.sorted_sets[0][1] == {str(PARTICIPANT_ID): leaderboard_sort_score(195, 300)}
+
+
+def test_retry_delay_is_exponential_and_bounded() -> None:
+    """Repeated Redis or database failures cannot cause an unbounded retry delay."""
+    assert retry_delay_seconds(1, 30) == 1
+    assert retry_delay_seconds(4, 30) == 8
+    assert retry_delay_seconds(10, 30) == 30
