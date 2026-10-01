@@ -3,8 +3,9 @@
 This Bun-managed React application is the demo client for the FastAPI quiz
 API. It has separate **Play quiz** and **Host quiz** workspaces: player REST
 commands join and submit answers while a native browser `EventSource` receives
-live snapshot, round, and leaderboard events. Host controls open and close
-rounds. The leaderboard remains public in both views.
+live snapshot, round, and leaderboard events. The host starts the first
+question, advances all players through the next four questions, and can reset a
+disposable demo. The leaderboard remains public in both views.
 
 ## Local setup
 
@@ -44,24 +45,25 @@ Ensure `api/.env` has valid Neon credentials, Redis settings, and a
 `QUIZ_API_HOST_DEMO_TOKEN`. Then run the web client as described above.
 
 1. In one window, select **Host quiz**, enter the seeded quiz ID and the value
-   of `QUIZ_API_HOST_DEMO_TOKEN`, then select **Log in as host**. The initial
-   seeded round ID is already populated:
-   `30000000-0000-0000-0000-000000000001`. Choose a duration and select
-   **Open round**.
+   of `QUIZ_API_HOST_DEMO_TOKEN`, then select **Log in as host**. Do not start
+   the first question yet.
 2. Open `http://127.0.0.1:5173` in two more browser windows (incognito windows
    are useful). In each, stay on **Play quiz**, enter the seeded quiz ID and a
    distinct display name, then select **Join quiz**.
-3. The player windows receive `round.opened` through SSE and show the question
-   and shared countdown. Submit an option from each player window.
+3. Back in the Host workspace, choose a duration (120 seconds is the default)
+   and select **Start first question**. New player joins are intentionally
+   disabled once this happens.
 4. Observe the answer result and the coalesced live leaderboard update. It is
    visible to the host and players; the current player is highlighted in blue.
-5. In the Host workspace, select **Close current round**. The host refreshes
-   public state every second; player views receive the `round.closed` event.
+5. Select **Next question** to close the current question and immediately move
+   every player to the next one. Repeat for all five questions. The fifth
+   advance completes the quiz.
+6. Select **Reset quiz for another test** to restore all five questions and
+   remove scores and participants. Reload player windows and join again.
 
-The other seeded round IDs end in `...0002` and `...0003`. Put the next ID into
-the host round field before opening it. Browser developer tools should show a
-single persistent `/api/v1/quizzes/.../events` request for every joined
-window; disconnecting and reconnecting receives a new `quiz.snapshot`.
+Browser developer tools should show a single persistent
+`/api/v1/quizzes/.../events` request for every joined player window;
+disconnecting and reconnecting receives a new `quiz.snapshot`.
 
 ## Verification
 

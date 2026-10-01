@@ -45,8 +45,9 @@ uv run uvicorn quiz_api.application:get_app --factory --reload
 ```
 
 The seeded quiz ID is `10000000-0000-0000-0000-000000000001`. The seed is
-idempotent and creates three pending rounds; open one of them through the host
-endpoint before submitting answers.
+idempotent and creates five pending one-question rounds. Participants must join
+before the host starts the first round; new joins are locked once the quiz is
+active.
 
 Check or stop the local Redis service with:
 
@@ -73,12 +74,14 @@ are represented as `{quiz_id}` and `{round_id}`. Every error uses this shape:
 
 | Method and path | Purpose | Credentials |
 | --- | --- | --- |
-| `POST /v1/quizzes/{quiz_id}/participants` | Join a quiz and receive quiz-scoped participant and stream tokens. | None; optional `Idempotency-Key`. |
+| `POST /v1/quizzes/{quiz_id}/participants` | Join a draft quiz and receive quiz-scoped participant and stream tokens. | None; optional `Idempotency-Key`; existing keys can reconnect after start. |
 | `GET /v1/quizzes/{quiz_id}` | Read public quiz state and the active question, never its answer key. | None. |
 | `GET /v1/quizzes/{quiz_id}/leaderboard?limit=50&offset=0` | Read a globally ranked, paginated leaderboard. | None. |
 | `POST /v1/quizzes/{quiz_id}/rounds/{round_id}/answers` | Submit an answer, or safely replay the prior identical submission. | `Authorization: Bearer <participant-token>`. |
 | `POST /v1/quizzes/{quiz_id}/rounds/{round_id}/open` | Open a pending round for a bounded duration. | `X-Host-Token`. |
 | `POST /v1/quizzes/{quiz_id}/rounds/{round_id}/close` | Close the currently open round. | `X-Host-Token`. |
+| `POST /v1/quizzes/{quiz_id}/rounds/advance` | Close the current question and open the next pending question. | `X-Host-Token`. |
+| `POST /v1/quizzes/{quiz_id}/reset` | Clear runtime data and restore all five rounds for a new demo. | `X-Host-Token`. |
 | `GET /v1/quizzes/{quiz_id}/events?stream_token=...` | Receive a snapshot and live SSE updates. | Quiz-scoped stream token in the query string. |
 | `GET /health` | Liveness probe for the API process. | None. |
 | `GET /ready` | Readiness probe that checks PostgreSQL and Redis. | None. |
@@ -106,13 +109,14 @@ curl -X POST "http://127.0.0.1:8000/v1/quizzes/${QUIZ_ID}/participants" \
   -d '{"display_name":"Ada"}'
 ```
 
-Open the round using the value configured in `QUIZ_API_HOST_DEMO_TOKEN`:
+After every participant has joined, open the first round using the value
+configured in `QUIZ_API_HOST_DEMO_TOKEN`:
 
 ```bash
 curl -X POST "http://127.0.0.1:8000/v1/quizzes/${QUIZ_ID}/rounds/${ROUND_ID}/open" \
   -H "X-Host-Token: ${QUIZ_API_HOST_DEMO_TOKEN}" \
   -H 'Content-Type: application/json' \
-  -d '{"duration_seconds":30}'
+  -d '{"duration_seconds":120}'
 ```
 
 Then submit an answer with the participant token from the join response:
@@ -128,6 +132,24 @@ Inspect the current standings with:
 
 ```bash
 curl "http://127.0.0.1:8000/v1/quizzes/${QUIZ_ID}/leaderboard?limit=50&offset=0"
+```
+
+Move every connected player to the next question with one host action:
+
+```bash
+curl -X POST "http://127.0.0.1:8000/v1/quizzes/${QUIZ_ID}/rounds/advance" \
+  -H "X-Host-Token: ${QUIZ_API_HOST_DEMO_TOKEN}" \
+  -H 'Content-Type: application/json' \
+  -d '{"duration_seconds":120}'
+```
+
+After the fifth question, or at any point during a disposable demo, reset all
+participants, answers, scores, outbox events, and cached standings. Existing
+players must reload and join again after a reset:
+
+```bash
+curl -X POST "http://127.0.0.1:8000/v1/quizzes/${QUIZ_ID}/reset" \
+  -H "X-Host-Token: ${QUIZ_API_HOST_DEMO_TOKEN}"
 ```
 
 ## Server-Sent Events
@@ -239,7 +261,9 @@ latency to assess the 500 ms answer-to-broadcast objective.
 - Input schemas bound display names, answers, duration, and pagination.
 - Expected domain failures map to safe 404, 409, or 422 responses; unexpected
   exceptions do not expose internal details.
-- Join attempts are limited per peer address. Answer attempts are limited per
+- New joins are accepted only while a quiz is in draft. A retry with the same
+  idempotency key can recover its existing participant credentials after the
+  quiz begins. Join attempts are limited per peer address. Answer attempts are limited per
   participant and peer address. The demo limiter is process-local; a
   multi-instance deployment must replace it with an atomic Redis limit.
 - Each response includes `X-Request-ID`, which is also included in error
