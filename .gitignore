@@ -1,0 +1,28 @@
+docs
+IMPLEMENTATION_CHECKLIST.md
+
+# Local secrets.
+.env
+.env.*
+!.env.example
+
+# Python and uv artifacts.
+api/.venv/
+api/.mypy_cache/
+api/.pytest_cache/
+api/.ruff_cache/
+api/.coverage
+api/coverage.xml
+api/htmlcov/
+api/**/__pycache__/
+api/**/*.py[cod]
+
+# React/Bun artifacts.
+web/node_modules/
+web/dist/
+web/.bun/
+
+# Editor and operating-system artifacts.
+.DS_Store
+.idea/
+.vscode/
