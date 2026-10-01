@@ -3,7 +3,18 @@ name = "quiz-api"
 version = "0.1.0"
 description = "Real-time vocabulary quiz API."
 requires-python = ">=3.12"
-dependencies = []
+dependencies = [
+    "alembic>=1.14",
+    "asyncpg>=0.30",
+    "fastapi>=0.115",
+    "pydantic-settings>=2.7",
+    "pyjwt>=2.10",
+    "redis>=5.2",
+    "sqlalchemy[asyncio]>=2.0",
+    "sse-starlette>=2.2",
+    "structlog>=24.4",
+    "uvicorn[standard]>=0.30",
+]
 
 [build-system]
 requires = ["hatchling"]
