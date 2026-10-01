@@ -67,3 +67,23 @@ class LeaderboardPageResponse(BaseModel):
     limit: int
     offset: int
     total: int
+
+
+class SubmitAnswerRequest(BaseModel):
+    """Participant-provided answer for one opened quiz round."""
+
+    model_config = ConfigDict(str_strip_whitespace=True)
+
+    answer: str = Field(min_length=1, max_length=255)
+
+
+class SubmitAnswerResponse(BaseModel):
+    """Authoritative result of accepting or replaying a round answer."""
+
+    awarded_points: int
+    is_correct: bool
+    is_replay: bool
+    response_ms: int
+    submission_id: UUID
+    total_response_ms: int
+    total_score: int

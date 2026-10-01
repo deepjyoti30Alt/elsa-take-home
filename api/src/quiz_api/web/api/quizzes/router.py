@@ -6,6 +6,8 @@ from uuid import UUID, uuid4
 from fastapi import APIRouter, Header, Query, status
 
 from quiz_api.web.api.quizzes.dependencies import (
+    AnswerServiceDependency,
+    AuthenticatedParticipantDependency,
     LeaderboardReadServiceDependency,
     ParticipationServiceDependency,
     QuizSnapshotServiceDependency,
@@ -19,9 +21,41 @@ from quiz_api.web.api.quizzes.schemas import (
     QuestionSnapshotResponse,
     QuizSnapshotResponse,
     RoundSnapshotResponse,
+    SubmitAnswerRequest,
+    SubmitAnswerResponse,
 )
 
 router = APIRouter(prefix="/quizzes", tags=["participants"])
+
+
+@router.post(
+    "/{quiz_id}/rounds/{round_id}/answers",
+    response_model=SubmitAnswerResponse,
+    tags=["answers"],
+)
+async def submit_answer(
+    quiz_id: UUID,
+    round_id: UUID,
+    request: SubmitAnswerRequest,
+    participant: AuthenticatedParticipantDependency,
+    answer_service: AnswerServiceDependency,
+) -> SubmitAnswerResponse:
+    """Accept a participant's first answer for an open round, or return its replay."""
+    result = await answer_service.submit_answer(
+        answer=request.answer,
+        participant_id=participant.participant_id,
+        quiz_id=quiz_id,
+        round_id=round_id,
+    )
+    return SubmitAnswerResponse(
+        awarded_points=result.awarded_points,
+        is_correct=result.is_correct,
+        is_replay=result.is_replay,
+        response_ms=result.response_ms,
+        submission_id=result.submission_id,
+        total_response_ms=result.total_response_ms,
+        total_score=result.total_score,
+    )
 
 
 @router.get("/{quiz_id}/leaderboard", response_model=LeaderboardPageResponse, tags=["leaderboard"])

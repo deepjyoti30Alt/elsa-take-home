@@ -7,11 +7,14 @@ from httpx import ASGITransport, AsyncClient
 from quiz_api.application import get_app
 from quiz_api.database.models import Participant, QuizStatus, RoundStatus
 from quiz_api.security.tokens import TokenService
+from quiz_api.services.answers import AnswerResult
 from quiz_api.services.leaderboard import RankedStanding
 from quiz_api.services.leaderboard_reads import LeaderboardPage
 from quiz_api.services.participation import JoinResult
 from quiz_api.services.snapshots import QuestionSnapshot, QuizSnapshot, RoundSnapshot
 from quiz_api.web.api.quizzes.dependencies import (
+    get_answer_service,
+    get_authenticated_participant,
     get_leaderboard_read_service,
     get_participation_service,
     get_quiz_snapshot_service,
@@ -21,6 +24,8 @@ from tests.test_application import build_test_settings
 
 QUIZ_ID = UUID("10000000-0000-0000-0000-000000000001")
 PARTICIPANT_ID = UUID("20000000-0000-0000-0000-000000000002")
+ROUND_ID = UUID("30000000-0000-0000-0000-000000000003")
+SUBMISSION_ID = UUID("40000000-0000-0000-0000-000000000004")
 
 
 class FakeParticipationService:
@@ -79,6 +84,22 @@ class FakeLeaderboardReadService:
             limit=50,
             offset=2,
             total=8,
+        )
+
+
+class FakeAnswerService:
+    """Return a scored answer without requiring database infrastructure."""
+
+    async def submit_answer(self, **_: object) -> AnswerResult:
+        """Return the deterministic command result used by this route test."""
+        return AnswerResult(
+            awarded_points=95,
+            is_correct=True,
+            is_replay=False,
+            response_ms=500,
+            submission_id=SUBMISSION_ID,
+            total_response_ms=500,
+            total_score=95,
         )
 
 
@@ -152,3 +173,56 @@ async def test_leaderboard_returns_paginated_deterministic_entries() -> None:
         "offset": 2,
         "total": 8,
     }
+
+
+async def test_answer_submission_requires_authentication() -> None:
+    """The answer command cannot run without a participant-scoped bearer token."""
+    app = get_app(build_test_settings())
+    transport = ASGITransport(app=app)
+
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        response = await client.post(
+            f"/v1/quizzes/{QUIZ_ID}/rounds/{ROUND_ID}/answers",
+            json={"answer": "alleviate"},
+        )
+
+    assert response.status_code == 401
+
+
+async def test_answer_submission_returns_authoritative_score() -> None:
+    """An authenticated participant receives the command service's score result."""
+    app = get_app(build_test_settings())
+    app.dependency_overrides[get_answer_service] = FakeAnswerService
+    app.dependency_overrides[get_authenticated_participant] = authenticated_participant
+    transport = ASGITransport(app=app)
+
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        response = await client.post(
+            f"/v1/quizzes/{QUIZ_ID}/rounds/{ROUND_ID}/answers",
+            json={"answer": "alleviate"},
+        )
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "awarded_points": 95,
+        "is_correct": True,
+        "is_replay": False,
+        "response_ms": 500,
+        "submission_id": str(SUBMISSION_ID),
+        "total_response_ms": 500,
+        "total_score": 95,
+    }
+
+
+def authenticated_participant() -> object:
+    """Provide valid participant claims without coupling the route test to headers."""
+    token_service = build_test_token_service()
+    participant = Participant(
+        display_name="Ada",
+        id=PARTICIPANT_ID,
+        join_key="request-1",
+        quiz_id=QUIZ_ID,
+        token_hash="a" * 64,
+    )
+    token = token_service.issue_participant_token(participant)
+    return token_service.validate_participant_token(token, quiz_id=QUIZ_ID)
