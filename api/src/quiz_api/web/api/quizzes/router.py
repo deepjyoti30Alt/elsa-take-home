@@ -8,9 +8,11 @@ from fastapi import APIRouter, Header, Query, status
 from quiz_api.web.api.quizzes.dependencies import (
     AnswerServiceDependency,
     AuthenticatedParticipantDependency,
+    HostAuthorizationDependency,
     LeaderboardReadServiceDependency,
     ParticipationServiceDependency,
     QuizSnapshotServiceDependency,
+    RoundControlServiceDependency,
     TokenServiceDependency,
 )
 from quiz_api.web.api.quizzes.schemas import (
@@ -18,14 +20,63 @@ from quiz_api.web.api.quizzes.schemas import (
     JoinParticipantResponse,
     LeaderboardEntryResponse,
     LeaderboardPageResponse,
+    OpenRoundRequest,
     QuestionSnapshotResponse,
     QuizSnapshotResponse,
     RoundSnapshotResponse,
+    RoundTransitionResponse,
     SubmitAnswerRequest,
     SubmitAnswerResponse,
 )
 
 router = APIRouter(prefix="/quizzes", tags=["participants"])
+
+
+@router.post(
+    "/{quiz_id}/rounds/{round_id}/open",
+    response_model=RoundTransitionResponse,
+    tags=["host-controls"],
+)
+async def open_round(
+    quiz_id: UUID,
+    round_id: UUID,
+    request: OpenRoundRequest,
+    _: HostAuthorizationDependency,
+    round_service: RoundControlServiceDependency,
+) -> RoundTransitionResponse:
+    """Open a pending round using the database clock as the timing authority."""
+    result = await round_service.open_round(
+        duration_seconds=request.duration_seconds,
+        quiz_id=quiz_id,
+        round_id=round_id,
+    )
+    return RoundTransitionResponse(
+        closes_at=result.closes_at,
+        opens_at=result.opens_at,
+        round_id=result.round_id,
+        status=result.status,
+    )
+
+
+@router.post(
+    "/{quiz_id}/rounds/{round_id}/close",
+    response_model=RoundTransitionResponse,
+    tags=["host-controls"],
+)
+async def close_round(
+    quiz_id: UUID,
+    round_id: UUID,
+    _: HostAuthorizationDependency,
+    round_service: RoundControlServiceDependency,
+) -> RoundTransitionResponse:
+    """Close the active round and return the authoritative close timestamp."""
+    result = await round_service.close_round(quiz_id=quiz_id, round_id=round_id)
+    return RoundTransitionResponse(
+        closes_at=result.closes_at,
+        opens_at=result.opens_at,
+        round_id=result.round_id,
+        status=result.status,
+    )
 
 
 @router.post(

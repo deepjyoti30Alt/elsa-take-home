@@ -1,5 +1,6 @@
 """Tests for the public participant-join API contract."""
 
+from datetime import UTC, datetime, timedelta
 from uuid import UUID
 
 from httpx import ASGITransport, AsyncClient
@@ -11,6 +12,7 @@ from quiz_api.services.answers import AnswerResult
 from quiz_api.services.leaderboard import RankedStanding
 from quiz_api.services.leaderboard_reads import LeaderboardPage
 from quiz_api.services.participation import JoinResult
+from quiz_api.services.rounds import RoundTransitionResult
 from quiz_api.services.snapshots import QuestionSnapshot, QuizSnapshot, RoundSnapshot
 from quiz_api.web.api.quizzes.dependencies import (
     get_answer_service,
@@ -18,6 +20,7 @@ from quiz_api.web.api.quizzes.dependencies import (
     get_leaderboard_read_service,
     get_participation_service,
     get_quiz_snapshot_service,
+    get_round_control_service,
     get_token_service,
 )
 from tests.test_application import build_test_settings
@@ -100,6 +103,30 @@ class FakeAnswerService:
             submission_id=SUBMISSION_ID,
             total_response_ms=500,
             total_score=95,
+        )
+
+
+class FakeRoundControlService:
+    """Return host-controlled transitions without requiring database infrastructure."""
+
+    async def open_round(self, **_: object) -> RoundTransitionResult:
+        """Return the deterministic open transition used by this route test."""
+        opens_at = datetime(2026, 10, 1, 12, tzinfo=UTC)
+        return RoundTransitionResult(
+            closes_at=opens_at + timedelta(seconds=30),
+            opens_at=opens_at,
+            round_id=ROUND_ID,
+            status=RoundStatus.OPEN,
+        )
+
+    async def close_round(self, **_: object) -> RoundTransitionResult:
+        """Return the deterministic close transition used by this route test."""
+        opens_at = datetime(2026, 10, 1, 12, tzinfo=UTC)
+        return RoundTransitionResult(
+            closes_at=opens_at + timedelta(seconds=15),
+            opens_at=opens_at,
+            round_id=ROUND_ID,
+            status=RoundStatus.CLOSED,
         )
 
 
@@ -212,6 +239,44 @@ async def test_answer_submission_returns_authoritative_score() -> None:
         "total_response_ms": 500,
         "total_score": 95,
     }
+
+
+async def test_open_round_requires_a_valid_host_token() -> None:
+    """Host controls reject a request that omits the shared host credential."""
+    app = get_app(build_test_settings())
+    transport = ASGITransport(app=app)
+
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        response = await client.post(
+            f"/v1/quizzes/{QUIZ_ID}/rounds/{ROUND_ID}/open",
+            json={"duration_seconds": 30},
+        )
+
+    assert response.status_code == 403
+
+
+async def test_host_round_controls_return_authoritative_transitions() -> None:
+    """A valid host token can open and close a configured quiz round."""
+    app = get_app(build_test_settings())
+    app.dependency_overrides[get_round_control_service] = FakeRoundControlService
+    transport = ASGITransport(app=app)
+    headers = {"X-Host-Token": "b" * 32}
+
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        opened = await client.post(
+            f"/v1/quizzes/{QUIZ_ID}/rounds/{ROUND_ID}/open",
+            headers=headers,
+            json={"duration_seconds": 30},
+        )
+        closed = await client.post(
+            f"/v1/quizzes/{QUIZ_ID}/rounds/{ROUND_ID}/close",
+            headers=headers,
+        )
+
+    assert opened.status_code == 200
+    assert opened.json()["status"] == "open"
+    assert closed.status_code == 200
+    assert closed.json()["status"] == "closed"
 
 
 def authenticated_participant() -> object:

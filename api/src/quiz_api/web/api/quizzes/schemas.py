@@ -87,3 +87,18 @@ class SubmitAnswerResponse(BaseModel):
     submission_id: UUID
     total_response_ms: int
     total_score: int
+
+
+class OpenRoundRequest(BaseModel):
+    """Host-selected duration for opening a preconfigured round."""
+
+    duration_seconds: int = Field(ge=1, le=300)
+
+
+class RoundTransitionResponse(BaseModel):
+    """Authoritative timestamps and state following a host round transition."""
+
+    closes_at: datetime
+    opens_at: datetime
+    round_id: UUID
+    status: RoundStatus

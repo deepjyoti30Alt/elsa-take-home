@@ -1,9 +1,10 @@
 """FastAPI dependencies for quiz domain services and token handling."""
 
+from hmac import compare_digest
 from typing import Annotated, cast
 from uuid import UUID
 
-from fastapi import Depends, HTTPException, Request, status
+from fastapi import Depends, Header, HTTPException, Request, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -11,6 +12,7 @@ from quiz_api.security.tokens import TokenClaims, TokenService, TokenValidationE
 from quiz_api.services.answers import AnswerService
 from quiz_api.services.leaderboard_reads import LeaderboardReadService
 from quiz_api.services.participation import ParticipationService
+from quiz_api.services.rounds import RoundControlService
 from quiz_api.services.snapshots import QuizSnapshotService
 from quiz_api.settings import Settings
 from quiz_api.web.dependencies import get_db_session
@@ -52,6 +54,27 @@ async def get_answer_service(
     return AnswerService(session)
 
 
+async def get_round_control_service(
+    session: Annotated[AsyncSession, Depends(get_db_session)],
+) -> RoundControlService:
+    """Create a host round-control service bound to the request database session."""
+    return RoundControlService(session)
+
+
+def require_host_token(
+    request: Request,
+    supplied_token: Annotated[str | None, Header(alias="X-Host-Token")] = None,
+) -> None:
+    """Authorize demo host controls with a constant-time shared-secret comparison."""
+    settings = cast(Settings, request.app.state.settings)
+    expected_token = settings.host_demo_token.get_secret_value()
+    if supplied_token is None or not compare_digest(supplied_token, expected_token):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="A valid host token is required.",
+        )
+
+
 def get_authenticated_participant(
     quiz_id: UUID,
     token_service: Annotated[TokenService, Depends(get_token_service)],
@@ -81,5 +104,7 @@ LeaderboardReadServiceDependency = Annotated[
 ]
 AnswerServiceDependency = Annotated[AnswerService, Depends(get_answer_service)]
 AuthenticatedParticipantDependency = Annotated[TokenClaims, Depends(get_authenticated_participant)]
+HostAuthorizationDependency = Annotated[None, Depends(require_host_token)]
 QuizSnapshotServiceDependency = Annotated[QuizSnapshotService, Depends(get_quiz_snapshot_service)]
+RoundControlServiceDependency = Annotated[RoundControlService, Depends(get_round_control_service)]
 TokenServiceDependency = Annotated[TokenService, Depends(get_token_service)]
