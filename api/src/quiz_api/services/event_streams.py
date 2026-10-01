@@ -8,7 +8,11 @@ from dataclasses import dataclass
 from typing import Any, Protocol
 from uuid import UUID
 
+import structlog
+
 from quiz_api.events import QuizEventEnvelope, quiz_channel
+
+logger = structlog.get_logger(__name__)
 
 
 class RedisPubSub(Protocol):
@@ -98,26 +102,37 @@ class QuizEventBroker:
             await asyncio.gather(*tasks, return_exceptions=True)
 
     async def _listen(self, quiz_id: UUID) -> None:
-        """Read one quiz channel and fan valid versioned events to local queues."""
-        pubsub = self._redis.pubsub()
+        """Read one quiz channel and reconnect while local listeners still exist."""
         channel = quiz_channel(quiz_id)
-        try:
-            await pubsub.subscribe(channel)
-            async for message in pubsub.listen():
-                if message.get("type") != "message":
-                    continue
-                data = message.get("data")
-                if not isinstance(data, str):
-                    continue
-                try:
-                    event = QuizEventEnvelope.model_validate_json(data)
-                except ValueError:
-                    continue
-                if event.quiz_id == quiz_id:
-                    await self._fan_out(quiz_id, event)
-        finally:
-            await pubsub.unsubscribe(channel)
-            await pubsub.aclose()
+        while await self._has_listeners(quiz_id):
+            pubsub = self._redis.pubsub()
+            try:
+                await pubsub.subscribe(channel)
+                async for message in pubsub.listen():
+                    if message.get("type") != "message":
+                        continue
+                    data = message.get("data")
+                    if not isinstance(data, str):
+                        continue
+                    try:
+                        event = QuizEventEnvelope.model_validate_json(data)
+                    except ValueError:
+                        continue
+                    if event.quiz_id == quiz_id:
+                        await self._fan_out(quiz_id, event)
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                logger.exception("quiz_event_listener_failed", quiz_id=str(quiz_id))
+                await asyncio.sleep(1)
+            finally:
+                await pubsub.unsubscribe(channel)
+                await pubsub.aclose()
+
+    async def _has_listeners(self, quiz_id: UUID) -> bool:
+        """Return whether this process still has any local stream for a quiz."""
+        async with self._lock:
+            return bool(self._listeners.get(quiz_id))
 
     async def _fan_out(self, quiz_id: UUID, event: QuizEventEnvelope) -> None:
         """Deliver an event without allowing one slow browser to block other listeners."""

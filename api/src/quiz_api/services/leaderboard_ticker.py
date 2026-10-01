@@ -15,7 +15,7 @@ from quiz_api.events import (
     QuizEventEnvelope,
 )
 from quiz_api.services.leaderboard_changes import LeaderboardChangeTracker
-from quiz_api.services.leaderboard_reads import LeaderboardReadService
+from quiz_api.services.leaderboard_reads import LeaderboardPage, LeaderboardReadService
 
 logger = structlog.get_logger(__name__)
 
@@ -28,6 +28,13 @@ class QuizEventPublisher(Protocol):
 
 
 LeaderboardPayloadFactory = Callable[[UUID], Awaitable[LeaderboardUpdatedEventPayload]]
+
+
+class LeaderboardPageReader(Protocol):
+    """Read paginated durable standings for ticker payload construction."""
+
+    async def get_page(self, *, limit: int, offset: int, quiz_id: UUID) -> LeaderboardPage:
+        """Return one globally ranked quiz leaderboard page."""
 
 
 class DatabaseLeaderboardPayloadFactory:
@@ -49,27 +56,45 @@ class DatabaseLeaderboardPayloadFactory:
         """Return all standings below the threshold or a compact top-of-board payload."""
         async with self._session_factory() as session:
             service = LeaderboardReadService(session)
-            page = await service.get_page(limit=self._full_limit, offset=0, quiz_id=quiz_id)
-            if page.total > self._full_limit:
-                page = await service.get_page(
-                    limit=self._compact_limit,
-                    offset=0,
-                    quiz_id=quiz_id,
-                )
-        return LeaderboardUpdatedEventPayload(
-            event_version=1,
-            standings=tuple(
-                LeaderboardStandingEventPayload(
-                    display_name=entry.display_name,
-                    participant_id=entry.participant_id,
-                    rank=entry.rank,
-                    total_response_ms=entry.total_response_ms,
-                    total_score=entry.total_score,
-                )
-                for entry in page.entries
-            ),
-            total_participants=page.total,
-        )
+            page = await bounded_leaderboard_page(
+                service,
+                compact_limit=self._compact_limit,
+                full_limit=self._full_limit,
+                quiz_id=quiz_id,
+            )
+        return leaderboard_updated_payload(page)
+
+
+async def bounded_leaderboard_page(
+    reader: LeaderboardPageReader,
+    *,
+    compact_limit: int,
+    full_limit: int,
+    quiz_id: UUID,
+) -> LeaderboardPage:
+    """Return a full page up to the threshold or the compact page above it."""
+    page = await reader.get_page(limit=full_limit, offset=0, quiz_id=quiz_id)
+    if page.total > full_limit:
+        return await reader.get_page(limit=compact_limit, offset=0, quiz_id=quiz_id)
+    return page
+
+
+def leaderboard_updated_payload(page: LeaderboardPage) -> LeaderboardUpdatedEventPayload:
+    """Convert one bounded durable standings page into its stream event payload."""
+    return LeaderboardUpdatedEventPayload(
+        event_version=1,
+        standings=tuple(
+            LeaderboardStandingEventPayload(
+                display_name=entry.display_name,
+                participant_id=entry.participant_id,
+                rank=entry.rank,
+                total_response_ms=entry.total_response_ms,
+                total_score=entry.total_score,
+            )
+            for entry in page.entries
+        ),
+        total_participants=page.total,
+    )
 
 
 class LeaderboardTicker:
