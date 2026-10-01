@@ -18,6 +18,7 @@ from quiz_api.events import (
     outbox_event_to_envelope,
     quiz_channel,
 )
+from quiz_api.observability import OUTBOX_FAILURES, record_outbox_lag
 from quiz_api.services.leaderboard_changes import LeaderboardChangeTracker
 
 LEADERBOARD_SCORE_SCALE = 1_000_000_000
@@ -155,6 +156,7 @@ class OutboxRelay:
             repository = OutboxRepository(session)
             events = await repository.list_unpublished_for_delivery(limit=batch_size)
             for event in events:
+                record_outbox_lag(event.created_at)
                 envelope = outbox_event_to_envelope(event)
                 await self._deliver(event.type, envelope)
                 repository.mark_published(event, datetime.now(UTC))
@@ -177,6 +179,7 @@ class OutboxRelay:
                     await asyncio.sleep(poll_interval_seconds)
             except Exception:
                 failures += 1
+                OUTBOX_FAILURES.inc()
                 await asyncio.sleep(retry_delay_seconds(failures, retry_max_seconds))
 
     async def _deliver(self, event_type: OutboxEventType, event: QuizEventEnvelope) -> None:

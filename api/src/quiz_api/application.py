@@ -4,11 +4,13 @@ from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from typing import Literal
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Response
+from prometheus_client import CONTENT_TYPE_LATEST
 from pydantic import BaseModel
 
 from quiz_api.infrastructure.resources import create_application_resources
 from quiz_api.logging import configure_logging
+from quiz_api.observability import metrics_payload
 from quiz_api.settings import Settings, get_settings
 from quiz_api.web.api.router import API_PREFIX, api_router
 from quiz_api.web.errors import register_exception_handlers
@@ -72,5 +74,10 @@ def get_app(settings: Settings | None = None) -> FastAPI:
     async def get_health() -> HealthResponse:
         """Report that the API process is available."""
         return HealthResponse()
+
+    @app.get("/metrics", include_in_schema=False)
+    async def get_metrics() -> Response:
+        """Expose Prometheus metrics without adding it to the public quiz API contract."""
+        return Response(content=metrics_payload(), media_type=CONTENT_TYPE_LATEST)
 
     return app

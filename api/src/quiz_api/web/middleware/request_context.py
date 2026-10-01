@@ -7,6 +7,8 @@ import structlog
 from fastapi import Request, Response
 from starlette.middleware.base import BaseHTTPMiddleware, RequestResponseEndpoint
 
+from quiz_api.observability import REQUEST_COUNT, REQUEST_DURATION, tracer
+
 logger = structlog.get_logger(__name__)
 
 
@@ -26,8 +28,12 @@ class RequestContextMiddleware(BaseHTTPMiddleware):
         logger.info("request_started", method=request.method, path=request.url.path)
 
         try:
-            response = await call_next(request)
+            with tracer.start_as_current_span("http.request") as span:
+                span.set_attribute("http.request.method", request.method)
+                span.set_attribute("url.path", request.url.path)
+                response = await call_next(request)
         except Exception:
+            REQUEST_COUNT.labels(method=request.method, path=request.url.path, status="500").inc()
             logger.exception(
                 "request_failed",
                 method=request.method,
@@ -36,9 +42,19 @@ class RequestContextMiddleware(BaseHTTPMiddleware):
             raise
         else:
             response.headers["X-Request-ID"] = request_id
+            duration_seconds = perf_counter() - started_at
+            REQUEST_COUNT.labels(
+                method=request.method,
+                path=request.url.path,
+                status=str(response.status_code),
+            ).inc()
+            REQUEST_DURATION.labels(
+                method=request.method,
+                path=request.url.path,
+            ).observe(duration_seconds)
             logger.info(
                 "request_completed",
-                duration_ms=round((perf_counter() - started_at) * 1000, 2),
+                duration_ms=round(duration_seconds * 1000, 2),
                 method=request.method,
                 path=request.url.path,
                 status_code=response.status_code,

@@ -9,6 +9,7 @@ from sse_starlette.event import ServerSentEvent
 from sse_starlette.sse import EventSourceResponse
 
 from quiz_api.events import QuizEventEnvelope, QuizSnapshotEventPayload, quiz_snapshot_event_payload
+from quiz_api.observability import record_answer
 from quiz_api.services.event_streams import StreamSubscription
 from quiz_api.web.api.quizzes.dependencies import (
     AnswerRateLimitDependency,
@@ -158,6 +159,7 @@ async def submit_answer(
         quiz_id=quiz_id,
         round_id=round_id,
     )
+    record_answer(is_correct=result.is_correct, is_replay=result.is_replay)
     return SubmitAnswerResponse(
         awarded_points=result.awarded_points,
         is_correct=result.is_correct,

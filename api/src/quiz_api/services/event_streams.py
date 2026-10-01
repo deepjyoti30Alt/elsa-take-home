@@ -11,6 +11,12 @@ from uuid import UUID
 import structlog
 
 from quiz_api.events import QuizEventEnvelope, quiz_channel
+from quiz_api.observability import (
+    ACTIVE_STREAMS,
+    DEPENDENCY_FAILURES,
+    STREAM_RECONNECTS,
+    record_event_delivery_delay,
+)
 
 logger = structlog.get_logger(__name__)
 
@@ -71,6 +77,7 @@ class QuizEventBroker:
         async with self._lock:
             listeners = self._listeners.setdefault(quiz_id, set())
             listeners.add(queue)
+            ACTIVE_STREAMS.inc()
             if quiz_id not in self._listener_tasks:
                 self._listener_tasks[quiz_id] = asyncio.create_task(self._listen(quiz_id))
         return StreamSubscription(self, False, quiz_id, queue)
@@ -83,6 +90,7 @@ class QuizEventBroker:
             if listeners is None:
                 return
             listeners.discard(queue)
+            ACTIVE_STREAMS.dec()
             if not listeners:
                 self._listeners.pop(quiz_id, None)
                 task = self._listener_tasks.pop(quiz_id, None)
@@ -96,6 +104,7 @@ class QuizEventBroker:
             tasks = tuple(self._listener_tasks.values())
             self._listener_tasks = {}
             self._listeners = {}
+            ACTIVE_STREAMS.set(0)
         for task in tasks:
             task.cancel()
         if tasks:
@@ -123,6 +132,8 @@ class QuizEventBroker:
             except asyncio.CancelledError:
                 raise
             except Exception:
+                DEPENDENCY_FAILURES.labels(dependency="redis").inc()
+                STREAM_RECONNECTS.inc()
                 logger.exception("quiz_event_listener_failed", quiz_id=str(quiz_id))
                 await asyncio.sleep(1)
             finally:
@@ -142,3 +153,4 @@ class QuizEventBroker:
             if queue.full():
                 queue.get_nowait()
             queue.put_nowait(event)
+        record_event_delivery_delay(event.occurred_at)

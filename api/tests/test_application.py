@@ -68,6 +68,18 @@ async def test_health_endpoint_returns_a_safe_correlation_id() -> None:
     assert response.headers["X-Request-ID"]
 
 
+async def test_metrics_endpoint_exposes_prometheus_request_metrics() -> None:
+    """Operational metrics are scrapeable without becoming part of the public OpenAPI contract."""
+    transport = ASGITransport(app=get_app(build_test_settings()))
+
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        response = await client.get("/metrics")
+
+    assert response.status_code == 200
+    assert "text/plain" in response.headers["content-type"]
+    assert "quiz_api_requests_total" in response.text
+
+
 async def test_http_errors_use_a_consistent_public_envelope() -> None:
     """Expected, validation, and unexpected failures share safe error contracts."""
     transport = ASGITransport(app=build_error_test_app(), raise_app_exceptions=False)

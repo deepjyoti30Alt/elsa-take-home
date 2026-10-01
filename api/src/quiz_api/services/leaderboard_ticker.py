@@ -3,6 +3,7 @@
 import asyncio
 from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime
+from time import perf_counter
 from typing import Protocol
 from uuid import UUID
 
@@ -14,6 +15,7 @@ from quiz_api.events import (
     LeaderboardUpdatedEventPayload,
     QuizEventEnvelope,
 )
+from quiz_api.observability import TICK_DURATION
 from quiz_api.services.leaderboard_changes import LeaderboardChangeTracker
 from quiz_api.services.leaderboard_reads import LeaderboardPage, LeaderboardReadService
 
@@ -113,23 +115,27 @@ class LeaderboardTicker:
 
     async def tick_once(self) -> int:
         """Publish updates for changed quizzes and preserve failed work for retry."""
+        started_at = perf_counter()
         changes = await self._change_tracker.drain()
-        for quiz_id, sequence in changes.items():
-            try:
-                payload = await self._payload_factory(quiz_id)
-                await self._publisher.publish(
-                    QuizEventEnvelope(
-                        occurred_at=datetime.now(UTC),
-                        payload=payload,
-                        quiz_id=quiz_id,
-                        seq=sequence,
-                        type="leaderboard.updated",
+        try:
+            for quiz_id, sequence in changes.items():
+                try:
+                    payload = await self._payload_factory(quiz_id)
+                    await self._publisher.publish(
+                        QuizEventEnvelope(
+                            occurred_at=datetime.now(UTC),
+                            payload=payload,
+                            quiz_id=quiz_id,
+                            seq=sequence,
+                            type="leaderboard.updated",
+                        )
                     )
-                )
-            except Exception:
-                await self._change_tracker.mark_changed(quiz_id, sequence)
-                raise
-        return len(changes)
+                except Exception:
+                    await self._change_tracker.mark_changed(quiz_id, sequence)
+                    raise
+            return len(changes)
+        finally:
+            TICK_DURATION.observe(perf_counter() - started_at)
 
     async def run_forever(self, *, interval_seconds: float) -> None:
         """Tick indefinitely while allowing worker cancellation during application shutdown."""
