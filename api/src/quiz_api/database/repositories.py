@@ -43,6 +43,12 @@ class QuizRepository:
         result = await self._session.execute(select(Quiz).where(Quiz.id == quiz_id))
         return result.scalar_one_or_none()
 
+    async def get_quiz_for_update(self, quiz_id: UUID) -> Quiz | None:
+        """Lock a quiz exclusively before changing its active-round state."""
+        statement = select(Quiz).where(Quiz.id == quiz_id).with_for_update()
+        result = await self._session.execute(statement)
+        return result.scalar_one_or_none()
+
     async def get_round_for_share(self, quiz_id: UUID, round_id: UUID) -> Round | None:
         """Lock a round in shared mode for an answer transaction."""
         statement = (

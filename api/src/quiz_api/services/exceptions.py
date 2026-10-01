@@ -31,3 +31,11 @@ class RoundNotOpenError(DomainError):
 
 class DuplicateAnswerError(DomainError):
     """Raised when a participant has already answered a quiz round."""
+
+
+class InvalidRoundDurationError(DomainError):
+    """Raised when a host attempts to open a round for an invalid duration."""
+
+
+class RoundTransitionError(DomainError):
+    """Raised when a host requests an invalid round state transition."""

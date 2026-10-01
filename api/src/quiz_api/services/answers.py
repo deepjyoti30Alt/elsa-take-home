@@ -5,7 +5,6 @@ from datetime import datetime
 from typing import Final
 from uuid import UUID
 
-from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from quiz_api.database.models import (
@@ -21,6 +20,7 @@ from quiz_api.database.repositories import (
     ParticipantRepository,
     QuizRepository,
 )
+from quiz_api.services.database_clock import get_database_clock
 from quiz_api.services.exceptions import (
     DuplicateAnswerError,
     ParticipantNotFoundError,
@@ -193,15 +193,6 @@ def ensure_round_is_open(
         message = "This round is not accepting answers."
         raise RoundNotOpenError(message)
     return opens_at, closes_at
-
-
-async def get_database_clock(session: AsyncSession) -> datetime:
-    """Read PostgreSQL's wall clock so all API instances score on one timeline."""
-    database_time: object = (await session.execute(select(func.clock_timestamp()))).scalar_one()
-    if not isinstance(database_time, datetime):
-        message = "Database did not return a timestamp."
-        raise RuntimeError(message)
-    return database_time
 
 
 def answer_accepted_payload(
