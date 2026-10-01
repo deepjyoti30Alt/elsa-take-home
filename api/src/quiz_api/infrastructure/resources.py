@@ -13,9 +13,9 @@ from sqlalchemy.ext.asyncio import (
     create_async_engine,
 )
 
+from quiz_api.services.leaderboard_changes import LeaderboardChangeTracker
 from quiz_api.services.leaderboard_ticker import (
     DatabaseLeaderboardPayloadFactory,
-    LeaderboardChangeTracker,
     LeaderboardTicker,
 )
 from quiz_api.services.outbox_relay import (
