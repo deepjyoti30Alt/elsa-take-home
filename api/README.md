@@ -80,6 +80,8 @@ are represented as `{quiz_id}` and `{round_id}`. Every error uses this shape:
 | `POST /v1/quizzes/{quiz_id}/rounds/{round_id}/open` | Open a pending round for a bounded duration. | `X-Host-Token`. |
 | `POST /v1/quizzes/{quiz_id}/rounds/{round_id}/close` | Close the currently open round. | `X-Host-Token`. |
 | `GET /v1/quizzes/{quiz_id}/events?stream_token=...` | Receive a snapshot and live SSE updates. | Quiz-scoped stream token in the query string. |
+| `GET /health` | Liveness probe for the API process. | None. |
+| `GET /ready` | Readiness probe that checks PostgreSQL and Redis. | None. |
 
 `POST /answers` returns the authoritative correctness, awarded points,
 response time, cumulative score, and `is_replay`. The database clock, rather
@@ -158,10 +160,11 @@ connections alive.
 
 Each API process creates a Redis pub/sub subscription for a quiz only while it
 has at least one local SSE listener. On disconnect and shutdown it cancels the
-listener and closes the Redis pub/sub connection. A transient subscription
-failure reconnects while local listeners remain. Per-listener queues are
-bounded; a slow client drops its oldest queued event and converges again from a
-fresh snapshot on reconnect.
+listener, wakes any waiting stream generators, and closes the Redis pub/sub
+connection. Clients reconnect to receive a fresh snapshot. A transient
+subscription failure reconnects while local listeners remain. Per-listener
+queues are bounded; a slow client drops its oldest queued event and converges
+again from a fresh snapshot on reconnect.
 
 ## Projection and delivery workers
 
@@ -189,6 +192,44 @@ The outbox relay leaves a failed event unpublished and retries with bounded
 exponential backoff. For a production multi-instance deployment, run relay and
 ticker workers under one elected-worker or distributed-lock arrangement so
 each outbox row is projected once at a time; duplicate delivery remains safe.
+
+## Operations and observability
+
+`/health` reports only that the API process can serve requests. `/ready` checks
+PostgreSQL and Redis concurrently, returning HTTP 200 only when both are
+available. Its JSON response reports each dependency separately; it returns
+HTTP 503 when either is unavailable. Use `/ready` for deployment traffic
+routing and `/health` for process liveness.
+
+`/metrics` is a Prometheus text-format scrape endpoint. It records HTTP request
+counts and latency, answer outcomes, outbox lag and failures, leaderboard-tick
+duration, event fan-out delay, active SSE streams, reconnects, and database or
+Redis readiness failures. The request middleware also creates OpenTelemetry
+request spans. The application deliberately does not configure an exporter;
+production deployment supplies the OpenTelemetry provider/exporter and protects
+the metrics endpoint at the network layer.
+
+Shutdown stops the relay and ticker workers, cancels pub/sub listeners, and
+wakes live SSE generators so connections close cleanly. Durable state remains
+in PostgreSQL, and a reconnect receives the authoritative snapshot.
+
+### Load scenarios
+
+`load_tests/quiz_burst.py` contains two Locust user types: a one-answer user
+for a five-second answer burst and a user that holds an SSE connection for one
+minute. Seed the API and open the configured round before running it. From
+`api/`, use a five-second spawn window, for example:
+
+```bash
+QUIZ_ID=10000000-0000-0000-0000-000000000001 \
+ROUND_ID=30000000-0000-0000-0000-000000000001 \
+uv run locust -f load_tests/quiz_burst.py --host http://127.0.0.1:8000
+```
+
+In the Locust UI, select the desired mix of answer-burst and sustained-SSE
+users, then spawn the target total over five seconds. Record the
+`quiz_api_event_delivery_delay_seconds` histogram alongside Locust request
+latency to assess the 500 ms answer-to-broadcast objective.
 
 ## Security and delivery behavior
 
@@ -238,3 +279,7 @@ uv run ruff check .
 uv run mypy
 uv run pytest
 ```
+
+The suite includes API-level readiness and metrics checks, SSE lifecycle tests,
+leaderboard concurrency and retry-recovery tests, plus the Locust scenario for
+manual capacity testing.
