@@ -27,7 +27,7 @@ from quiz_api.services.exceptions import (
     RoundNotFoundError,
     RoundNotOpenError,
 )
-from quiz_api.services.scoring import ScoreResult, calculate_score
+from quiz_api.services.scoring import ScoreResult, calculate_score, normalize_answer
 
 ANSWER_ACCEPTED_EVENT_VERSION: Final[int] = 1
 
@@ -38,6 +38,7 @@ class AnswerResult:
 
     awarded_points: int
     is_correct: bool
+    is_replay: bool
     response_ms: int
     submission_id: UUID
     total_response_ms: int
@@ -101,7 +102,12 @@ class AnswerService:
                 submitted_at=submitted_at,
             )
             if submission is None:
-                raise DuplicateAnswerError
+                return await self._get_duplicate_result(
+                    answer=answer,
+                    participant_id=participant_id,
+                    quiz_id=quiz_id,
+                    round_id=round_id,
+                )
 
             total_score, total_response_ms = await self._participants.apply_score(
                 participant_id=participant.id,
@@ -135,11 +141,39 @@ class AnswerService:
             return AnswerResult(
                 awarded_points=score.awarded_points,
                 is_correct=score.is_correct,
+                is_replay=False,
                 response_ms=score.response_ms,
                 submission_id=submission.id,
                 total_response_ms=total_response_ms,
                 total_score=total_score,
             )
+
+    async def _get_duplicate_result(
+        self,
+        *,
+        answer: str,
+        participant_id: UUID,
+        quiz_id: UUID,
+        round_id: UUID,
+    ) -> AnswerResult:
+        """Return a same-answer replay or reject an attempt to alter an answer."""
+        existing_submission = await self._answers.get_submission(participant_id, round_id)
+        refreshed_participant = await self._participants.get_participant(quiz_id, participant_id)
+        if existing_submission is None or refreshed_participant is None:
+            message = "The prior answer was not available after a duplicate submission."
+            raise RuntimeError(message)
+        if not is_same_answer_retry(existing_submission.answer, answer):
+            message = "A different answer was already submitted for this round."
+            raise DuplicateAnswerError(message)
+        return AnswerResult(
+            awarded_points=existing_submission.awarded_points,
+            is_correct=existing_submission.is_correct,
+            is_replay=True,
+            response_ms=existing_submission.response_ms,
+            submission_id=existing_submission.id,
+            total_response_ms=refreshed_participant.total_response_ms,
+            total_score=refreshed_participant.total_score,
+        )
 
 
 def ensure_round_is_open(
@@ -186,3 +220,8 @@ def answer_accepted_payload(
         "total_response_ms": total_response_ms,
         "total_score": total_score,
     }
+
+
+def is_same_answer_retry(existing_answer: str, retried_answer: str) -> bool:
+    """Compare answers with the same normalization used by scoring."""
+    return normalize_answer(existing_answer) == normalize_answer(retried_answer)

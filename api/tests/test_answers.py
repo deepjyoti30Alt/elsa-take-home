@@ -6,7 +6,11 @@ from uuid import UUID
 import pytest
 
 from quiz_api.database.models import RoundStatus
-from quiz_api.services.answers import answer_accepted_payload, ensure_round_is_open
+from quiz_api.services.answers import (
+    answer_accepted_payload,
+    ensure_round_is_open,
+    is_same_answer_retry,
+)
 from quiz_api.services.exceptions import RoundNotOpenError
 from quiz_api.services.scoring import ScoreResult
 
@@ -31,6 +35,12 @@ def test_answer_payload_contains_projection_totals() -> None:
         "total_response_ms": 2500,
         "total_score": 175,
     }
+
+
+def test_same_answer_retries_are_normalized_but_changed_answers_are_not() -> None:
+    """Idempotent retries preserve the original answer instead of rescoring it."""
+    assert is_same_answer_retry(" Alleviate ", "alleviate")
+    assert not is_same_answer_retry("alleviate", "revoke")
 
 
 @pytest.mark.parametrize(
