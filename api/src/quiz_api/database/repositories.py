@@ -6,6 +6,7 @@ from typing import Any, cast
 from uuid import UUID
 
 from sqlalchemy import Select, desc, select
+from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.sql.expression import UnaryExpression
 
@@ -102,6 +103,33 @@ class ParticipantRepository:
         )
         result = await self._session.execute(statement)
         return result.scalar_one_or_none()
+
+    async def create_or_get_by_join_key(
+        self,
+        *,
+        display_name: str,
+        join_key: str,
+        quiz_id: UUID,
+        token_hash: str,
+    ) -> tuple[Participant, bool]:
+        """Create one participant or return the prior result of a retried join."""
+        statement = (
+            insert(Participant)
+            .values(
+                display_name=display_name,
+                join_key=join_key,
+                quiz_id=quiz_id,
+                token_hash=token_hash,
+            )
+            .on_conflict_do_nothing(index_elements=[Participant.quiz_id, Participant.join_key])
+            .returning(Participant.id)
+        )
+        participant_id = (await self._session.execute(statement)).scalar_one_or_none()
+        participant = await self.get_by_join_key(quiz_id, join_key)
+        if participant is None:
+            message = "Participant was not available after a join attempt."
+            raise RuntimeError(message)
+        return participant, participant_id is not None
 
     async def list_leaderboard(
         self,
