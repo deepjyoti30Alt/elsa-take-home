@@ -1,0 +1,62 @@
+"""Alembic configuration for asynchronous PostgreSQL migrations."""
+
+import asyncio
+from logging.config import fileConfig
+
+from sqlalchemy import Connection, pool
+from sqlalchemy.ext.asyncio import async_engine_from_config
+
+from alembic import context
+from quiz_api.database import models
+from quiz_api.settings import get_database_settings
+
+config = context.config
+
+if config.config_file_name is not None:
+    fileConfig(config.config_file_name)
+
+target_metadata = models.Base.metadata
+
+
+def run_migrations_offline() -> None:
+    """Generate SQL without establishing a database connection."""
+    context.configure(
+        url=get_database_settings().database_url,
+        target_metadata=target_metadata,
+        literal_binds=True,
+        compare_type=True,
+        dialect_opts={"paramstyle": "named"},
+    )
+
+    with context.begin_transaction():
+        context.run_migrations()
+
+
+def run_sync_migrations(connection: Connection) -> None:
+    """Run synchronous Alembic operations through an async connection."""
+    context.configure(connection=connection, target_metadata=target_metadata, compare_type=True)
+
+    with context.begin_transaction():
+        context.run_migrations()
+
+
+async def run_migrations_online() -> None:
+    """Connect through asyncpg and apply pending migration revisions."""
+    configuration = config.get_section(config.config_ini_section, {})
+    configuration["sqlalchemy.url"] = get_database_settings().database_url
+    connectable = async_engine_from_config(
+        configuration,
+        prefix="sqlalchemy.",
+        poolclass=pool.NullPool,
+    )
+
+    async with connectable.connect() as connection:
+        await connection.run_sync(run_sync_migrations)
+
+    await connectable.dispose()
+
+
+if context.is_offline_mode():
+    run_migrations_offline()
+else:
+    asyncio.run(run_migrations_online())

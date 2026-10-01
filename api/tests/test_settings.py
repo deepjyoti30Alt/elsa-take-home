@@ -3,7 +3,7 @@
 import pytest
 from pydantic import ValidationError
 
-from quiz_api.settings import Settings
+from quiz_api.settings import DatabaseSettings, Settings
 
 
 def build_settings(**overrides: object) -> Settings:
@@ -40,3 +40,12 @@ def test_settings_reject_unsupported_connection_schemes(field: str, value: str) 
     """Database and Redis URLs must target the configured async clients."""
     with pytest.raises(ValidationError):
         build_settings(**{field: value})
+
+
+def test_database_settings_require_only_an_async_postgresql_url() -> None:
+    """Migration tooling does not need unrelated API signing configuration."""
+    settings = DatabaseSettings.model_validate(
+        {"database_url": "postgresql+asyncpg://user:password@db.example.com/quiz"},
+    )
+
+    assert settings.database_url.startswith("postgresql+asyncpg://")

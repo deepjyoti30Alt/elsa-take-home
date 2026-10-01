@@ -6,8 +6,8 @@ from pydantic import Field, SecretStr, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
-class Settings(BaseSettings):
-    """Validated runtime configuration for the quiz API."""
+class DatabaseSettings(BaseSettings):
+    """Configuration needed by database tools outside the running API."""
 
     model_config = SettingsConfigDict(
         env_file=".env",
@@ -16,22 +16,7 @@ class Settings(BaseSettings):
         extra="ignore",
     )
 
-    environment: str = "local"
-    log_level: str = "INFO"
-    host: str = "127.0.0.1"
-    port: int = Field(default=8000, ge=1, le=65535)
-    cors_allowed_origins: str = "http://localhost:3000"
-
     database_url: str
-    redis_url: str = "redis://localhost:6379/0"
-    jwt_signing_key: SecretStr = Field(min_length=32)
-    host_demo_token: SecretStr = Field(min_length=32)
-
-    participant_token_ttl_seconds: int = Field(default=14_400, gt=0)
-    stream_token_ttl_seconds: int = Field(default=300, gt=0)
-    leaderboard_tick_ms: int = Field(default=250, ge=250, le=500)
-    full_leaderboard_limit: int = Field(default=500, gt=0)
-    compact_leaderboard_limit: int = Field(default=50, gt=0)
 
     @field_validator("database_url")
     @classmethod
@@ -41,6 +26,26 @@ class Settings(BaseSettings):
             message = "database_url must use the postgresql+asyncpg:// scheme"
             raise ValueError(message)
         return value
+
+
+class Settings(DatabaseSettings):
+    """Validated runtime configuration for the quiz API."""
+
+    environment: str = "local"
+    log_level: str = "INFO"
+    host: str = "127.0.0.1"
+    port: int = Field(default=8000, ge=1, le=65535)
+    cors_allowed_origins: str = "http://localhost:3000"
+
+    redis_url: str = "redis://localhost:6379/0"
+    jwt_signing_key: SecretStr = Field(min_length=32)
+    host_demo_token: SecretStr = Field(min_length=32)
+
+    participant_token_ttl_seconds: int = Field(default=14_400, gt=0)
+    stream_token_ttl_seconds: int = Field(default=300, gt=0)
+    leaderboard_tick_ms: int = Field(default=250, ge=250, le=500)
+    full_leaderboard_limit: int = Field(default=500, gt=0)
+    compact_leaderboard_limit: int = Field(default=50, gt=0)
 
     @field_validator("redis_url")
     @classmethod
@@ -63,3 +68,9 @@ class Settings(BaseSettings):
 def get_settings() -> Settings:
     """Create and cache validated application settings for the process."""
     return Settings()  # type: ignore[call-arg]  # Required values are loaded from the environment.
+
+
+@lru_cache(maxsize=1)
+def get_database_settings() -> DatabaseSettings:
+    """Create settings required by Alembic without requiring API secrets."""
+    return DatabaseSettings()  # type: ignore[call-arg]  # Required values are loaded from the environment.
