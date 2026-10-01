@@ -110,3 +110,10 @@ class AdvanceRoundResponse(BaseModel):
     closed_round_id: UUID
     completed: bool
     next_round: RoundTransitionResponse | None
+
+
+class QuizResetResponse(BaseModel):
+    """Confirmation returned after clearing a quiz's disposable runtime state."""
+
+    removed_participants: int
+    status: QuizStatus

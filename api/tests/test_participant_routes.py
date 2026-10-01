@@ -12,6 +12,7 @@ from quiz_api.services.answers import AnswerResult
 from quiz_api.services.leaderboard import RankedStanding
 from quiz_api.services.leaderboard_reads import LeaderboardPage
 from quiz_api.services.participation import JoinResult
+from quiz_api.services.quiz_reset import QuizResetResult
 from quiz_api.services.rounds import AdvanceRoundResult, RoundTransitionResult
 from quiz_api.services.snapshots import QuestionSnapshot, QuizSnapshot, RoundSnapshot
 from quiz_api.web.api.quizzes.dependencies import (
@@ -19,6 +20,7 @@ from quiz_api.web.api.quizzes.dependencies import (
     get_authenticated_participant,
     get_leaderboard_read_service,
     get_participation_service,
+    get_quiz_reset_service,
     get_quiz_snapshot_service,
     get_round_control_service,
     get_token_service,
@@ -142,6 +144,14 @@ class FakeRoundControlService:
                 status=RoundStatus.OPEN,
             ),
         )
+
+
+class FakeQuizResetService:
+    """Return a reset confirmation without requiring a database or Redis."""
+
+    async def reset_quiz(self, _: UUID) -> QuizResetResult:
+        """Report the deterministic participant cleanup count used by route tests."""
+        return QuizResetResult(removed_participants=2)
 
 
 def build_test_token_service() -> TokenService:
@@ -310,6 +320,20 @@ async def test_host_can_advance_to_the_next_question() -> None:
     assert response.status_code == 200
     assert response.json()["closed_round_id"] == str(ROUND_ID)
     assert response.json()["next_round"]["status"] == "open"
+
+
+async def test_host_can_reset_a_quiz_for_a_fresh_demo() -> None:
+    """Reset is a host-only operation that returns the number of removed participants."""
+    app = get_app(build_test_settings())
+    app.dependency_overrides[get_quiz_reset_service] = FakeQuizResetService
+    transport = ASGITransport(app=app)
+    headers = {"X-Host-Token": "b" * 32}
+
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        response = await client.post(f"/v1/quizzes/{QUIZ_ID}/reset", headers=headers)
+
+    assert response.status_code == 200
+    assert response.json() == {"removed_participants": 2, "status": "draft"}
 
 
 async def test_event_stream_rejects_an_invalid_query_token_before_connecting() -> None:

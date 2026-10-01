@@ -16,7 +16,9 @@ from quiz_api.services.leaderboard_cache import (
     RedisLeaderboardReadTransport,
 )
 from quiz_api.services.leaderboard_reads import LeaderboardReadService
+from quiz_api.services.outbox_relay import RedisEventTransport, RedisLeaderboardProjection
 from quiz_api.services.participation import ParticipationService
+from quiz_api.services.quiz_reset import QuizResetService
 from quiz_api.services.rounds import RoundControlService
 from quiz_api.services.snapshots import QuizSnapshotService
 from quiz_api.settings import Settings
@@ -66,6 +68,14 @@ async def get_round_control_service(
 ) -> RoundControlService:
     """Create a host round-control service bound to the request database session."""
     return RoundControlService(session)
+
+
+async def get_quiz_reset_service(
+    session: Annotated[AsyncSession, Depends(get_db_session)],
+    redis: Annotated[RedisEventTransport, Depends(get_redis)],
+) -> QuizResetService:
+    """Create the host-only reset service with durable and cache access."""
+    return QuizResetService(session, RedisLeaderboardProjection(redis))
 
 
 def require_host_token(
@@ -175,5 +185,6 @@ JoinRateLimitDependency = Annotated[None, Depends(enforce_join_rate_limit)]
 QuizSnapshotServiceDependency = Annotated[QuizSnapshotService, Depends(get_quiz_snapshot_service)]
 AnswerRateLimitDependency = Annotated[None, Depends(enforce_answer_rate_limit)]
 RoundControlServiceDependency = Annotated[RoundControlService, Depends(get_round_control_service)]
+QuizResetServiceDependency = Annotated[QuizResetService, Depends(get_quiz_reset_service)]
 StreamBrokerDependency = Annotated[QuizEventBroker, Depends(get_stream_broker)]
 TokenServiceDependency = Annotated[TokenService, Depends(get_token_service)]

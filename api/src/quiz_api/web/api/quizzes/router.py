@@ -8,6 +8,7 @@ from fastapi import APIRouter, Header, Query, Request, status
 from sse_starlette.event import ServerSentEvent
 from sse_starlette.sse import EventSourceResponse
 
+from quiz_api.database.models import QuizStatus
 from quiz_api.events import QuizEventEnvelope, QuizSnapshotEventPayload, quiz_snapshot_event_payload
 from quiz_api.observability import record_answer
 from quiz_api.services.event_streams import StreamSubscription
@@ -20,6 +21,7 @@ from quiz_api.web.api.quizzes.dependencies import (
     JoinRateLimitDependency,
     LeaderboardReadServiceDependency,
     ParticipationServiceDependency,
+    QuizResetServiceDependency,
     QuizSnapshotServiceDependency,
     RoundControlServiceDependency,
     StreamBrokerDependency,
@@ -33,6 +35,7 @@ from quiz_api.web.api.quizzes.schemas import (
     LeaderboardPageResponse,
     OpenRoundRequest,
     QuestionSnapshotResponse,
+    QuizResetResponse,
     QuizSnapshotResponse,
     RoundSnapshotResponse,
     RoundTransitionResponse,
@@ -170,6 +173,23 @@ async def advance_round(
         closed_round_id=result.closed_round_id,
         completed=result.completed,
         next_round=next_round,
+    )
+
+
+@router.post(
+    "/{quiz_id}/reset",
+    response_model=QuizResetResponse,
+    tags=["host-controls"],
+)
+async def reset_quiz(
+    quiz_id: UUID,
+    _: HostAuthorizationDependency,
+    reset_service: QuizResetServiceDependency,
+) -> QuizResetResponse:
+    """Reset a host-controlled demo quiz so participants can join and replay it."""
+    result = await reset_service.reset_quiz(quiz_id)
+    return QuizResetResponse(
+        removed_participants=result.removed_participants, status=QuizStatus.DRAFT
     )
 
 
