@@ -79,6 +79,7 @@ are represented as `{quiz_id}` and `{round_id}`. Every error uses this shape:
 | `POST /v1/quizzes/{quiz_id}/rounds/{round_id}/answers` | Submit an answer, or safely replay the prior identical submission. | `Authorization: Bearer <participant-token>`. |
 | `POST /v1/quizzes/{quiz_id}/rounds/{round_id}/open` | Open a pending round for a bounded duration. | `X-Host-Token`. |
 | `POST /v1/quizzes/{quiz_id}/rounds/{round_id}/close` | Close the currently open round. | `X-Host-Token`. |
+| `GET /v1/quizzes/{quiz_id}/events?stream_token=...` | Receive a snapshot and live SSE updates. | Quiz-scoped stream token in the query string. |
 
 `POST /answers` returns the authoritative correctness, awarded points,
 response time, cumulative score, and `is_replay`. The database clock, rather
@@ -94,7 +95,7 @@ export ROUND_ID=30000000-0000-0000-0000-000000000001
 ```
 
 Join as a participant. Preserve the returned `participant_token` privately;
-the stream token is intentionally scoped only to the future SSE connection.
+the stream token is short-lived and scoped only to the SSE connection.
 
 ```bash
 curl -X POST "http://127.0.0.1:8000/v1/quizzes/${QUIZ_ID}/participants" \
@@ -126,6 +127,41 @@ Inspect the current standings with:
 ```bash
 curl "http://127.0.0.1:8000/v1/quizzes/${QUIZ_ID}/leaderboard?limit=50&offset=0"
 ```
+
+## Server-Sent Events
+
+The join response contains a `stream_url` such as
+`/v1/quizzes/{quiz_id}/events?stream_token=...`. Use it directly with the
+browser's native `EventSource`; native EventSource does not support an
+`Authorization` header. A participant command token cannot open a stream, and
+a stream token cannot submit an answer.
+
+```js
+const stream = new EventSource(`http://127.0.0.1:8000${joinResponse.stream_url}`)
+
+stream.addEventListener("quiz.snapshot", (message) => {
+  const snapshot = JSON.parse(message.data)
+  // Replace local quiz state and retain snapshot.seq.
+})
+
+stream.addEventListener("round.opened", applyEvent)
+stream.addEventListener("round.closed", applyEvent)
+stream.addEventListener("leaderboard.updated", applyEvent)
+```
+
+Every connection and reconnection receives `quiz.snapshot` first. Subsequent
+events have an `id` and a versioned JSON body with the durable per-quiz `seq`.
+Clients should ignore an event whose sequence is not newer than the state they
+hold. The server emits comment heartbeats at
+`QUIZ_API_SSE_HEARTBEAT_SECONDS`, keeping load balancers and idle browser
+connections alive.
+
+Each API process creates a Redis pub/sub subscription for a quiz only while it
+has at least one local SSE listener. On disconnect and shutdown it cancels the
+listener and closes the Redis pub/sub connection. A transient subscription
+failure reconnects while local listeners remain. Per-listener queues are
+bounded; a slow client drops its oldest queued event and converges again from a
+fresh snapshot on reconnect.
 
 ## Projection and delivery workers
 
@@ -183,6 +219,8 @@ each outbox row is projected once at a time; duplicate delivery remains safe.
 | `QUIZ_API_OUTBOX_RELAY_BATCH_SIZE` | Maximum unpublished events handled in one relay transaction. |
 | `QUIZ_API_OUTBOX_RELAY_POLL_MS` | Idle delay before polling for unpublished events. |
 | `QUIZ_API_OUTBOX_RELAY_RETRY_MAX_SECONDS` | Maximum relay backoff after a failed projection/delivery. |
+| `QUIZ_API_SSE_HEARTBEAT_SECONDS` | Interval for SSE comment heartbeats. |
+| `QUIZ_API_SSE_QUEUE_SIZE` | Maximum buffered events for one local SSE connection. |
 | `QUIZ_API_LEADERBOARD_TICK_MS` | Coalescing interval for leaderboard broadcasts. |
 | `QUIZ_API_FULL_LEADERBOARD_LIMIT` | Participant threshold for full leaderboard event payloads. |
 | `QUIZ_API_COMPACT_LEADERBOARD_LIMIT` | Top-entry count in large leaderboard event payloads. |
