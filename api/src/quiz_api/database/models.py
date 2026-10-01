@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from datetime import datetime
+from enum import Enum as PythonEnum
 from enum import StrEnum
 from typing import Any
 from uuid import UUID, uuid4
@@ -57,6 +58,11 @@ class OutboxEventType(StrEnum):
     ROUND_OPENED = "round_opened"
 
 
+def enum_values(enum_class: type[PythonEnum]) -> list[str]:
+    """Persist ``StrEnum`` values, matching the lowercase migration constraints."""
+    return [str(member.value) for member in enum_class]
+
+
 class Question(Base):
     """Immutable vocabulary question and its server-only answer key."""
 
@@ -80,7 +86,13 @@ class Quiz(Base):
 
     id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True, default=uuid4)
     status: Mapped[QuizStatus] = mapped_column(
-        Enum(QuizStatus, name="quiz_status", native_enum=False, create_constraint=True),
+        Enum(
+            QuizStatus,
+            name="quiz_status",
+            native_enum=False,
+            create_constraint=True,
+            values_callable=enum_values,
+        ),
         nullable=False,
         default=QuizStatus.DRAFT,
     )
@@ -131,7 +143,13 @@ class Round(Base):
         nullable=False,
     )
     status: Mapped[RoundStatus] = mapped_column(
-        Enum(RoundStatus, name="round_status", native_enum=False, create_constraint=True),
+        Enum(
+            RoundStatus,
+            name="round_status",
+            native_enum=False,
+            create_constraint=True,
+            values_callable=enum_values,
+        ),
         nullable=False,
         default=RoundStatus.PENDING,
     )
@@ -227,7 +245,13 @@ class ScoreLedgerEntry(Base):
     )
     points: Mapped[int] = mapped_column(Integer, nullable=False)
     reason: Mapped[ScoreReason] = mapped_column(
-        Enum(ScoreReason, name="score_reason", native_enum=False, create_constraint=True),
+        Enum(
+            ScoreReason,
+            name="score_reason",
+            native_enum=False,
+            create_constraint=True,
+            values_callable=enum_values,
+        ),
         nullable=False,
     )
     created_at: Mapped[datetime] = mapped_column(
@@ -254,7 +278,13 @@ class OutboxEvent(Base):
     )
     seq: Mapped[int] = mapped_column(BigInteger, nullable=False)
     type: Mapped[OutboxEventType] = mapped_column(
-        Enum(OutboxEventType, name="outbox_event_type", native_enum=False, create_constraint=True),
+        Enum(
+            OutboxEventType,
+            name="outbox_event_type",
+            native_enum=False,
+            create_constraint=True,
+            values_callable=enum_values,
+        ),
         nullable=False,
     )
     payload: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False)
