@@ -38,6 +38,7 @@ button {
 .hero,
 .setup-grid,
 .quiz-grid,
+.workspace-grid,
 .button-row,
 .panel-heading,
 .leaderboard-entry {
@@ -58,6 +59,30 @@ button {
 .hero {
   gap: 1rem;
   margin-bottom: 1.5rem;
+}
+
+.workspace-tabs {
+  display: inline-flex;
+  background: #101d31;
+  border: 1px solid #2b4265;
+  border-radius: 0.75rem;
+  gap: 0.25rem;
+  margin-bottom: 1rem;
+  padding: 0.3rem;
+}
+
+.workspace-tab {
+  background: transparent;
+  border: 0;
+  border-radius: 0.5rem;
+  color: #b6c4dc;
+  font-weight: 700;
+  padding: 0.55rem 0.8rem;
+}
+
+.workspace-tab--active {
+  background: #2a5689;
+  color: #fff;
 }
 
 .eyebrow {
@@ -132,7 +157,8 @@ h2 {
 }
 
 .setup-grid,
-.quiz-grid {
+.quiz-grid,
+.workspace-grid {
   gap: 1rem;
 }
 
@@ -145,9 +171,18 @@ h2 {
   align-items: start;
 }
 
+.workspace-grid {
+  align-items: start;
+}
+
 .setup-grid > *,
-.quiz-grid > * {
+.quiz-grid > *,
+.workspace-grid > * {
   flex: 1;
+}
+
+.workspace-content {
+  flex: 1.25;
 }
 
 .question-panel {
@@ -168,6 +203,20 @@ h2 {
 
 .panel-heading .eyebrow {
   font-size: 0.68rem;
+}
+
+.login-panel {
+  max-width: 44rem;
+}
+
+.host-status {
+  background: #143c32;
+  border: 1px solid #36b19e;
+  border-radius: 99rem;
+  color: #8af0dc;
+  font-size: 0.78rem;
+  font-weight: 700;
+  padding: 0.4rem 0.6rem;
 }
 
 label {
@@ -284,6 +333,11 @@ button:focus-visible {
   font-size: 0.85rem;
 }
 
+.leaderboard-note {
+  font-size: 0.82rem;
+  margin: -0.7rem 0 1rem;
+}
+
 .leaderboard-list {
   list-style: none;
   margin: 0;
@@ -320,7 +374,8 @@ button:focus-visible {
 
   .hero,
   .setup-grid,
-  .quiz-grid {
+  .quiz-grid,
+  .workspace-grid {
     align-items: stretch;
     flex-direction: column;
   }

@@ -1,10 +1,10 @@
 # Vocabulary Live web client
 
 This Bun-managed React application is the demo client for the FastAPI quiz
-API. It deliberately remains thin: REST commands join a participant, load the
-public quiz and leaderboard, submit an answer, and operate the demo host
-controls. Native browser `EventSource` receives the live snapshot, round, and
-leaderboard events.
+API. It has separate **Play quiz** and **Host quiz** workspaces: player REST
+commands join and submit answers while a native browser `EventSource` receives
+live snapshot, round, and leaderboard events. Host controls open and close
+rounds. The leaderboard remains public in both views.
 
 ## Local setup
 
@@ -43,19 +43,20 @@ uv run uvicorn quiz_api.application:get_app --factory --reload
 Ensure `api/.env` has valid Neon credentials, Redis settings, and a
 `QUIZ_API_HOST_DEMO_TOKEN`. Then run the web client as described above.
 
-1. Open `http://127.0.0.1:5173` in two browser windows (an incognito window is
-   useful). Enter the seeded quiz ID and a distinct display name in each, then
-   select **Join quiz**.
-2. In one window, enter the value of `QUIZ_API_HOST_DEMO_TOKEN`. The initial
+1. In one window, select **Host quiz**, enter the seeded quiz ID and the value
+   of `QUIZ_API_HOST_DEMO_TOKEN`, then select **Log in as host**. The initial
    seeded round ID is already populated:
    `30000000-0000-0000-0000-000000000001`. Choose a duration and select
    **Open round**.
-3. Both windows receive `round.opened` through SSE and show the question and a
-   shared countdown. Submit an option from each participant window.
-4. Observe the answer result and the coalesced live leaderboard update. The
-   current participant is highlighted in blue.
-5. Select **Close round**. The client refreshes the authoritative public state
-   after the `round.closed` event.
+2. Open `http://127.0.0.1:5173` in two more browser windows (incognito windows
+   are useful). In each, stay on **Play quiz**, enter the seeded quiz ID and a
+   distinct display name, then select **Join quiz**.
+3. The player windows receive `round.opened` through SSE and show the question
+   and shared countdown. Submit an option from each player window.
+4. Observe the answer result and the coalesced live leaderboard update. It is
+   visible to the host and players; the current player is highlighted in blue.
+5. In the Host workspace, select **Close current round**. The host refreshes
+   public state every second; player views receive the `round.closed` event.
 
 The other seeded round IDs end in `...0002` and `...0003`. Put the next ID into
 the host round field before opening it. Browser developer tools should show a
@@ -72,4 +73,5 @@ bun run build
 
 The application keeps participant and stream tokens only in component memory;
 refreshing the page intentionally requires a new participant join. Host tokens
-are likewise never persisted.
+are likewise never persisted. Switching workspace intentionally clears the
+previous role's credentials and stream so host and player sessions do not mix.
