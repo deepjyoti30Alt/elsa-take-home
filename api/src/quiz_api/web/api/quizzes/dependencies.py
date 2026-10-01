@@ -4,12 +4,13 @@ from hmac import compare_digest
 from typing import Annotated, cast
 from uuid import UUID
 
-from fastapi import Depends, Header, HTTPException, Request, status
+from fastapi import Depends, Header, HTTPException, Query, Request, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from quiz_api.security.tokens import TokenClaims, TokenService, TokenValidationError
 from quiz_api.services.answers import AnswerService
+from quiz_api.services.event_streams import QuizEventBroker
 from quiz_api.services.leaderboard_cache import (
     RedisLeaderboardReader,
     RedisLeaderboardReadTransport,
@@ -19,7 +20,7 @@ from quiz_api.services.participation import ParticipationService
 from quiz_api.services.rounds import RoundControlService
 from quiz_api.services.snapshots import QuizSnapshotService
 from quiz_api.settings import Settings
-from quiz_api.web.dependencies import get_db_session, get_redis
+from quiz_api.web.dependencies import ResourcesDependency, get_db_session, get_redis
 from quiz_api.web.rate_limit import FixedWindowRateLimiter
 
 participant_bearer_scheme = HTTPBearer(auto_error=False)
@@ -104,6 +105,26 @@ def get_authenticated_participant(
         ) from exception
 
 
+def get_authenticated_stream(
+    quiz_id: UUID,
+    stream_token: Annotated[str, Query(min_length=1)],
+    token_service: Annotated[TokenService, Depends(get_token_service)],
+) -> TokenClaims:
+    """Validate a short-lived stream token supplied in the native EventSource URL."""
+    try:
+        return token_service.validate_stream_token(stream_token, quiz_id=quiz_id)
+    except TokenValidationError as exception:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="The stream token is invalid or expired.",
+        ) from exception
+
+
+def get_stream_broker(resources: ResourcesDependency) -> QuizEventBroker:
+    """Return the lifecycle-owned shared Redis subscription broker."""
+    return resources.event_broker
+
+
 async def enforce_join_rate_limit(request: Request) -> None:
     """Bound unauthenticated participant joins per source address."""
     settings = cast(Settings, request.app.state.settings)
@@ -148,9 +169,11 @@ LeaderboardReadServiceDependency = Annotated[
 ]
 AnswerServiceDependency = Annotated[AnswerService, Depends(get_answer_service)]
 AuthenticatedParticipantDependency = Annotated[TokenClaims, Depends(get_authenticated_participant)]
+AuthenticatedStreamDependency = Annotated[TokenClaims, Depends(get_authenticated_stream)]
 HostAuthorizationDependency = Annotated[None, Depends(require_host_token)]
 JoinRateLimitDependency = Annotated[None, Depends(enforce_join_rate_limit)]
 QuizSnapshotServiceDependency = Annotated[QuizSnapshotService, Depends(get_quiz_snapshot_service)]
 AnswerRateLimitDependency = Annotated[None, Depends(enforce_answer_rate_limit)]
 RoundControlServiceDependency = Annotated[RoundControlService, Depends(get_round_control_service)]
+StreamBrokerDependency = Annotated[QuizEventBroker, Depends(get_stream_broker)]
 TokenServiceDependency = Annotated[TokenService, Depends(get_token_service)]

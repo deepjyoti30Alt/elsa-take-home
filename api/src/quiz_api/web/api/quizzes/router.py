@@ -1,20 +1,27 @@
 """HTTP endpoints for quiz participant joins."""
 
+from collections.abc import AsyncIterator
 from urllib.parse import urlencode
 from uuid import UUID, uuid4
 
-from fastapi import APIRouter, Header, Query, status
+from fastapi import APIRouter, Header, Query, Request, status
+from sse_starlette.event import ServerSentEvent
+from sse_starlette.sse import EventSourceResponse
 
+from quiz_api.events import QuizEventEnvelope, QuizSnapshotEventPayload, quiz_snapshot_event_payload
+from quiz_api.services.event_streams import StreamSubscription
 from quiz_api.web.api.quizzes.dependencies import (
     AnswerRateLimitDependency,
     AnswerServiceDependency,
     AuthenticatedParticipantDependency,
+    AuthenticatedStreamDependency,
     HostAuthorizationDependency,
     JoinRateLimitDependency,
     LeaderboardReadServiceDependency,
     ParticipationServiceDependency,
     QuizSnapshotServiceDependency,
     RoundControlServiceDependency,
+    StreamBrokerDependency,
     TokenServiceDependency,
 )
 from quiz_api.web.api.quizzes.schemas import (
@@ -32,6 +39,56 @@ from quiz_api.web.api.quizzes.schemas import (
 )
 
 router = APIRouter(prefix="/quizzes", tags=["participants"])
+
+
+@router.get("/{quiz_id}/events", tags=["events"])
+async def stream_quiz_events(
+    quiz_id: UUID,
+    request: Request,
+    _: AuthenticatedStreamDependency,
+    broker: StreamBrokerDependency,
+    snapshot_service: QuizSnapshotServiceDependency,
+) -> EventSourceResponse:
+    """Send a fresh snapshot, then sequenced Redis events, to one EventSource client."""
+    subscription = await broker.connect(quiz_id)
+    try:
+        snapshot = await snapshot_service.get_snapshot(quiz_id)
+    except Exception:
+        await subscription.close()
+        raise
+    snapshot_payload = quiz_snapshot_event_payload(snapshot)
+    settings = request.app.state.settings
+
+    return EventSourceResponse(
+        stream_messages(subscription, snapshot_payload),
+        ping=settings.sse_heartbeat_seconds,
+        ping_message_factory=lambda: ServerSentEvent(comment="keepalive"),
+    )
+
+
+def stream_event(event: QuizEventEnvelope) -> ServerSentEvent:
+    """Convert a validated Redis event into a named SSE message with its sequence ID."""
+    return ServerSentEvent(data=event.model_dump_json(), event=event.type, id=str(event.seq))
+
+
+async def stream_messages(
+    subscription: StreamSubscription,
+    snapshot_payload: QuizSnapshotEventPayload,
+) -> AsyncIterator[ServerSentEvent]:
+    """Yield a snapshot first and skip queued events already reflected by its sequence."""
+    try:
+        yield ServerSentEvent(
+            data=snapshot_payload.model_dump_json(),
+            event="quiz.snapshot",
+            id=str(snapshot_payload.seq),
+        )
+        while True:
+            event = await subscription.queue.get()
+            if event.seq <= snapshot_payload.seq:
+                continue
+            yield stream_event(event)
+    finally:
+        await subscription.close()
 
 
 @router.post(

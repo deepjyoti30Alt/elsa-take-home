@@ -6,7 +6,8 @@ from uuid import UUID
 
 from pydantic import BaseModel, Field, TypeAdapter
 
-from quiz_api.database.models import OutboxEvent, OutboxEventType, RoundStatus
+from quiz_api.database.models import OutboxEvent, OutboxEventType, QuizStatus, RoundStatus
+from quiz_api.services.snapshots import QuizSnapshot
 
 EVENT_SCHEMA_VERSION: Final[Literal[1]] = 1
 
@@ -49,6 +50,55 @@ class LeaderboardUpdatedEventPayload(BaseModel):
     event_version: Literal[1]
     standings: tuple[LeaderboardStandingEventPayload, ...]
     total_participants: int = Field(ge=0)
+
+
+class SnapshotQuestionEventPayload(BaseModel):
+    """Presentation-safe question content carried by the first SSE event."""
+
+    options: tuple[str, ...]
+    prompt: str
+
+
+class SnapshotRoundEventPayload(BaseModel):
+    """Current round state carried by a stream snapshot."""
+
+    closes_at: datetime | None
+    id: UUID
+    opens_at: datetime | None
+    question: SnapshotQuestionEventPayload
+    status: RoundStatus
+
+
+class QuizSnapshotEventPayload(BaseModel):
+    """Full client-safe quiz state sent first on every stream connection."""
+
+    current_round: SnapshotRoundEventPayload | None
+    event_version: Literal[1] = EVENT_SCHEMA_VERSION
+    quiz_id: UUID
+    seq: int = Field(ge=0)
+    status: QuizStatus
+
+
+def quiz_snapshot_event_payload(snapshot: QuizSnapshot) -> QuizSnapshotEventPayload:
+    """Convert a database-backed quiz snapshot into the first SSE event payload."""
+    current_round = None
+    if snapshot.current_round is not None:
+        current_round = SnapshotRoundEventPayload(
+            closes_at=snapshot.current_round.closes_at,
+            id=snapshot.current_round.id,
+            opens_at=snapshot.current_round.opens_at,
+            question=SnapshotQuestionEventPayload(
+                options=snapshot.current_round.question.options,
+                prompt=snapshot.current_round.question.prompt,
+            ),
+            status=snapshot.current_round.status,
+        )
+    return QuizSnapshotEventPayload(
+        current_round=current_round,
+        quiz_id=snapshot.id,
+        seq=snapshot.event_seq,
+        status=snapshot.status,
+    )
 
 
 class QuizEventEnvelope(BaseModel):

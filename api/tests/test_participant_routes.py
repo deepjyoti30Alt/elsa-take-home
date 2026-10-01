@@ -279,6 +279,17 @@ async def test_host_round_controls_return_authoritative_transitions() -> None:
     assert closed.json()["status"] == "closed"
 
 
+async def test_event_stream_rejects_an_invalid_query_token_before_connecting() -> None:
+    """Native EventSource credentials are short-lived stream tokens, never bearer tokens."""
+    app = get_app(build_test_settings())
+    transport = ASGITransport(app=app)
+
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        response = await client.get(f"/v1/quizzes/{QUIZ_ID}/events?stream_token=invalid")
+
+    assert response.status_code == 401
+
+
 def authenticated_participant() -> object:
     """Provide valid participant claims without coupling the route test to headers."""
     token_service = build_test_token_service()

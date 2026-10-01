@@ -37,6 +37,7 @@ class QuizSnapshot:
     current_round: RoundSnapshot | None
     id: UUID
     status: QuizStatus
+    event_seq: int = 0
 
 
 class QuizSnapshotService:
@@ -52,7 +53,12 @@ class QuizSnapshotService:
         if quiz is None:
             raise QuizNotFoundError
         if quiz.current_round_id is None:
-            return QuizSnapshot(current_round=None, id=quiz.id, status=quiz.status)
+            return QuizSnapshot(
+                current_round=None,
+                event_seq=quiz.next_event_seq,
+                id=quiz.id,
+                status=quiz.status,
+            )
 
         round_ = await self._quizzes.get_round(quiz.id, quiz.current_round_id)
         if round_ is None:
@@ -72,4 +78,5 @@ class QuizSnapshotService:
             ),
             id=quiz.id,
             status=quiz.status,
+            event_seq=quiz.next_event_seq,
         )

@@ -51,6 +51,8 @@ class Settings(DatabaseSettings):
     outbox_relay_batch_size: int = Field(default=100, gt=0, le=1000)
     outbox_relay_poll_ms: int = Field(default=250, ge=100, le=10_000)
     outbox_relay_retry_max_seconds: int = Field(default=30, ge=1, le=300)
+    sse_heartbeat_seconds: int = Field(default=15, ge=5, le=60)
+    sse_queue_size: int = Field(default=100, ge=10, le=1000)
 
     @field_validator("redis_url")
     @classmethod

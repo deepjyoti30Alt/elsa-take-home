@@ -13,6 +13,7 @@ from sqlalchemy.ext.asyncio import (
     create_async_engine,
 )
 
+from quiz_api.services.event_streams import QuizEventBroker, RedisPubSubFactory
 from quiz_api.services.leaderboard_changes import LeaderboardChangeTracker
 from quiz_api.services.leaderboard_ticker import (
     DatabaseLeaderboardPayloadFactory,
@@ -61,11 +62,13 @@ class ApplicationResources:
     redis: Redis
     outbox_relay: OutboxRelay
     leaderboard_ticker: LeaderboardTicker
+    event_broker: QuizEventBroker
     workers: BackgroundWorkers
 
     async def close(self) -> None:
         """Release resources in reverse dependency order."""
         await self.workers.stop()
+        await self.event_broker.close()
         await self.redis.aclose()
         await self.engine.dispose()
 
@@ -83,6 +86,7 @@ def create_application_resources(settings: Settings) -> ApplicationResources:
     )
     redis = Redis.from_url(settings.redis_url, decode_responses=True)
     redis_transport = cast(RedisEventTransport, redis)
+    redis_pubsub_factory = cast(RedisPubSubFactory, redis)
     change_tracker = LeaderboardChangeTracker()
     publisher = RedisQuizEventPublisher(redis_transport)
     projection = RedisLeaderboardProjection(redis_transport)
@@ -105,5 +109,6 @@ def create_application_resources(settings: Settings) -> ApplicationResources:
             ),
             publisher,
         ),
+        event_broker=QuizEventBroker(redis_pubsub_factory, queue_size=settings.sse_queue_size),
         workers=BackgroundWorkers(),
     )
