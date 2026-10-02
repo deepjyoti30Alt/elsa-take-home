@@ -131,8 +131,9 @@ class LeaderboardTicker:
                         )
                     )
                 except Exception:
+                    logger.exception("leaderboard_ticker_quiz_failed", quiz_id=str(quiz_id))
                     await self._change_tracker.mark_changed(quiz_id, sequence)
-                    raise
+                    # Don't re-raise - log the error and continue processing other quizzes
             return len(changes)
         finally:
             TICK_DURATION.observe(perf_counter() - started_at)

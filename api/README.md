@@ -293,6 +293,63 @@ latency to assess the 500 ms answer-to-broadcast objective.
 Never commit `.env`, Neon credentials, signing keys, participant tokens, or
 host tokens.
 
+## Production deployment considerations
+
+### Background worker coordination
+
+The outbox relay and leaderboard ticker currently run as in-process background
+tasks started with the API lifespan. In a **multi-instance deployment**:
+
+- **Multiple relays** will process the same outbox events. This is safe due to
+  idempotent Redis projections (absolute values via `ZADD`), but wastes CPU
+  cycles.
+- **Multiple tickers** will publish duplicate `leaderboard.updated` events to
+  Redis pub/sub channels, causing redundant SSE traffic to all connected
+  clients.
+
+**Recommended approaches for production:**
+
+1. **Dedicated worker instance**: Run a single API instance with workers
+   enabled, and disable workers on all other instances (via feature flag or
+   separate deployment configuration).
+2. **Leader election**: Implement distributed locking using PostgreSQL advisory
+   locks (`pg_try_advisory_lock`), Redis `SET NX EX`, or Kubernetes leader
+   election sidecar so only one instance runs workers at a time.
+3. **External job queue**: Move workers to a separate service using Celery,
+   Temporal, or a similar task queue with single-consumer guarantees.
+
+The current implementation is **safe for correctness** due to idempotent
+projections but **not optimized for multi-instance efficiency**.
+
+### Rate limiting
+
+The current rate limiter (`quiz_api.web.rate_limit`) uses an in-memory
+dictionary. In multi-instance deployments, limits are enforced **per-instance**,
+not globally. A user can bypass limits by distributing requests across instances.
+
+**Production alternatives:**
+
+- Use Redis-based rate limiting with atomic `INCR`/`EXPIRE` operations
+- Deploy a rate-limiting API gateway (e.g., Kong, Traefik, AWS API Gateway)
+- Use a library like `slowapi` with a Redis backend
+
+The in-memory implementation is acceptable for **demo and single-instance
+development** only.
+
+## Known limitations
+
+- **Rate limiting**: In-memory (per-instance). Production requires distributed
+  rate limiting via Redis or API gateway.
+- **Background workers**: Process-local tasks without leader election. Multiple
+  instances cause duplicate work and redundant SSE events.
+- **Leaderboard SSE payloads**: When a quiz has >500 participants (configurable
+  via `QUIZ_API_FULL_LEADERBOARD_LIMIT`), SSE events contain only the top 50
+  participants. Players outside the top 50 must poll the REST `/leaderboard`
+  endpoint to see their exact rank.
+- **Demo quiz ID**: The web client uses a hardcoded quiz ID
+  (`10000000-0000-0000-0000-000000000001`) from seed data. Production would
+  support multiple quizzes with routing by quiz ID.
+
 ## Quality checks
 
 Run these commands from `api/` before submitting changes:

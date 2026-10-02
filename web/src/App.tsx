@@ -21,6 +21,8 @@ import type {
   SnapshotEvent,
 } from "./types";
 
+// Demo quiz ID created by the seed script (api/src/quiz_api/seed.py).
+// Production would support multiple quizzes with routing by quiz ID.
 const DEMO_QUIZ_ID = "10000000-0000-0000-0000-000000000001";
 const DEMO_FIRST_ROUND_ID = "30000000-0000-0000-0000-000000000001";
 const JOIN_KEY_PREFIX = "vocabulary-live:join-key:";
@@ -137,33 +139,45 @@ export function App(): JSX.Element {
     source.onerror = () => setConnection("connecting");
 
     const handleSnapshot = (message: MessageEvent<string>) => {
-      const event = JSON.parse(message.data) as SnapshotEvent;
-      if (event.seq < latestSequence.current) {
-        return;
+      try {
+        const event = JSON.parse(message.data) as SnapshotEvent;
+        if (event.seq < latestSequence.current) {
+          return;
+        }
+        latestSequence.current = event.seq;
+        setQuiz(snapshotFromEvent(event));
+      } catch (error) {
+        console.error("Failed to parse snapshot event:", error);
       }
-      latestSequence.current = event.seq;
-      setQuiz(snapshotFromEvent(event));
     };
 
     const handleRound = (message: MessageEvent<string>) => {
-      const event = JSON.parse(message.data) as QuizEvent<RoundEventPayload>;
-      if (event.seq <= latestSequence.current) {
-        return;
+      try {
+        const event = JSON.parse(message.data) as QuizEvent<RoundEventPayload>;
+        if (event.seq <= latestSequence.current) {
+          return;
+        }
+        latestSequence.current = event.seq;
+        void refreshPublicState(event.quiz_id).catch((requestError: unknown) => {
+          setError(errorMessage(requestError));
+        });
+      } catch (error) {
+        console.error("Failed to parse round event:", error);
       }
-      latestSequence.current = event.seq;
-      void refreshPublicState(event.quiz_id).catch((requestError: unknown) => {
-        setError(errorMessage(requestError));
-      });
     };
 
     const handleLeaderboard = (message: MessageEvent<string>) => {
-      const event = JSON.parse(message.data) as QuizEvent<LeaderboardEventPayload>;
-      if (event.seq <= latestSequence.current) {
-        return;
+      try {
+        const event = JSON.parse(message.data) as QuizEvent<LeaderboardEventPayload>;
+        if (event.seq <= latestSequence.current) {
+          return;
+        }
+        latestSequence.current = event.seq;
+        setLeaderboard(event.payload.standings);
+        setLeaderboardTotal(event.payload.total_participants);
+      } catch (error) {
+        console.error("Failed to parse leaderboard event:", error);
       }
-      latestSequence.current = event.seq;
-      setLeaderboard(event.payload.standings);
-      setLeaderboardTotal(event.payload.total_participants);
     };
 
     source.addEventListener("quiz.snapshot", handleSnapshot);
